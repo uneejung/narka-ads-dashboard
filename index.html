@@ -651,7 +651,7 @@ function renderCharts(rows,tab){
     scales:{
       x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
       y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
-      y2:{type:'linear',position:'right',min:0,max:100,grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}},
+      y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}},
     }}},
   [barTopLabelPlugin]);
 
@@ -665,7 +665,7 @@ function renderCharts(rows,tab){
     scales:{
       x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
       y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
-      y2:{type:'linear',position:'right',min:0,max:100,grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}},
+      y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}},
     }}},
   [llp(1,'#C05E1A')]);
 
