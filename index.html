@@ -528,7 +528,7 @@ function buildCharts(rows,tab){
         </div></div>
         ${prodFilterHtml('p22',curProd22,PRODUCT_DEFS)}
         <div class="legend">
-          ${lg('rgba(255,200,0,0.9)','전환매출 / 추정 온라인(%)')} ${lg('#C05E1A','META+CPC 통합 ROAS(%)','line')}
+          ${lg('rgba(255,200,0,0.9)','전환매출 (원)')} ${lg('#C05E1A','통합 ROAS (%)','line')}
         </div>
         <div class="chart-wrap" style="height:200px"><canvas id="c22"></canvas></div>
       </div>
@@ -729,135 +729,55 @@ function render21(R,labels,avgRatio){
   }});
 }
 
-// ── 2-2 물결 broken axis ──
+// ── 2-2 품목별 광고 ROAS: 막대=전환매출(원), 꺾은선=통합ROAS(%) ──
 function render22(R,labels,avgRatio){
   if(charts.c22){try{charts.c22.destroy();}catch(e){}}
   const el=document.getElementById('c22');if(!el)return;
 
   const YELLOW='rgba(255,200,0,0.88)', YELLOWB='#B8860B';
   const shades=['rgba(255,200,0,0.9)','rgba(225,170,0,0.85)','rgba(195,140,0,0.8)','rgba(160,110,0,0.75)'];
+  const roasColors=['#C05E1A','#2a78d6','#7B2D8B','#1baf7a'];
 
-  // 공통 데이터 계산
-  const getProdDep=(pk,R)=>R.map(r=>{
-    const cv=r[pk+'CV']??0, estOnline=(r[pk]??0)*avgRatio;
-    return estOnline>0?Math.round(cv/estOnline*1000)/10:null;
+  const makeOpts=(hasY2)=>({
+    responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>
+      i.yAxisID==='y2'?`${i.dataset.label}: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`
+    }}},
+    scales:{
+      x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
+      y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
+      ...(hasY2?{y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},
+        ticks:{font:{size:9},callback:v=>v+'%'}}}:{}),
+    }
   });
-  const getProdRoas=(pk,R)=>R.map(r=>r[pk+'Roas']!=null?Math.round(r[pk+'Roas']*100):null);
 
   if(curProd22==='all'){
-    // 전체 비교 - 물결 필요
-    const allDeps=PRODUCT_DEFS_NO_ALL.map(p=>getProdDep(p.k,R));
-    // 이상치 감지: 중앙값 대비 5배 이상인 값
-    const allVals=allDeps.flat().filter(v=>v!=null&&!isNaN(v));
-    if(!allVals.length){charts.c22=null;return;}
-    allVals.sort((a,b)=>a-b);
-    const p75=allVals[Math.floor(allVals.length*0.75)];
-    const maxVal=Math.max(...allVals);
-    const hasOutlier=maxVal>p75*4;
-
-    if(hasOutlier){
-      renderBrokenAxis22(el,labels,PRODUCT_DEFS_NO_ALL,allDeps,shades,p75,maxVal,null,null);
-    } else {
-      const datasets=PRODUCT_DEFS_NO_ALL.map((p,i)=>({
-        label:p.l, data:allDeps[i],
-        backgroundColor:shades[i%shades.length],borderColor:YELLOWB,borderWidth:1,borderRadius:2,
-      }));
-      charts.c22=new Chart(el,{type:'bar',data:{labels,datasets},options:{
-        responsive:true,maintainAspectRatio:false,
-        plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>`${i.dataset.label}: ${i.raw}%`}}},
-        scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},y:{ticks:{font:{size:9},callback:v=>v+'%'}}},
-      }});
-    }
+    const barDs=PRODUCT_DEFS_NO_ALL.map((p,i)=>({
+      label:p.l+' 전환매출',
+      data:R.map(r=>Math.round((r[p.k+'CV']||0)/1e4)),
+      backgroundColor:shades[i%shades.length],borderColor:YELLOWB,borderWidth:1,borderRadius:2,yAxisID:'y',
+    }));
+    const lineDs=PRODUCT_DEFS_NO_ALL.map((p,i)=>({
+      label:p.l+' ROAS',
+      data:R.map(r=>r[p.k+'Roas']!=null?Math.round(r[p.k+'Roas']*100):null),
+      type:'line',borderColor:roasColors[i%roasColors.length],backgroundColor:'transparent',
+      borderWidth:1.5,pointRadius:2,tension:0.3,spanGaps:true,yAxisID:'y2',
+    }));
+    charts.c22=new Chart(el,{type:'bar',
+      data:{labels,datasets:[...barDs,...lineDs]},
+      options:makeOpts(true)});
     return;
   }
 
   const p=PRODUCT_DEFS.find(x=>x.k===curProd22)||PRODUCT_DEFS[1];
-  const depData=getProdDep(p.k,R);
-  const roasData=getProdRoas(p.k,R);
-  const allVals2=depData.filter(v=>v!=null&&!isNaN(v));
-  const maxVal2=allVals2.length?Math.max(...allVals2):100;
-  const hasOutlier2=maxVal2>300;
+  const cvData=R.map(r=>Math.round((r[p.k+'CV']||0)/1e4));
+  const roasData=R.map(r=>r[p.k+'Roas']!=null?Math.round(r[p.k+'Roas']*100):null);
 
-  if(hasOutlier2){
-    renderBrokenAxis22(el,labels,[p],[depData],['rgba(255,200,0,0.9)'],100,maxVal2,roasData,'#C05E1A');
-  } else {
-    charts.c22=new Chart(el,{type:'bar',data:{labels,datasets:[
-      {label:`${p.l} 전환/추정온라인`,data:depData,backgroundColor:YELLOW,borderColor:YELLOWB,borderWidth:1,borderRadius:3,yAxisID:'y'},
-      {label:`${p.l} 통합ROAS`,data:roasData,type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
-    ]},options:{responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>i.datasetIndex===1?`ROAS: ${i.raw}%`:`${i.dataset.label}: ${i.raw}%`}}},
-      scales:{
-        x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
-        y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v+'%'}},
-        y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}},
-      }},plugins:[llpFn(1,'#C05E1A')]});
-  }
-}
-
-// 물결(broken axis) 렌더러 - y축 cap + 이상치 라벨 표시
-function renderBrokenAxis22(el,labels,prods,allDepsArr,shades,normalMax,outlierMax,roasData,roasColor){
-  // 이상치는 normalMax로 cap하고, 실제 값은 툴팁/라벨로 표시
-  const YELLOW='rgba(255,200,0,0.88)', YELLOWB='#B8860B';
-
-  // 이상치 라벨 플러그인
-  const outlierLabel={
-    id:'outlierLabel',
-    afterDatasetsDraw(chart){
-      const {ctx}=chart;
-      prods.forEach((p,pi)=>{
-        const meta=chart.getDatasetMeta(pi);
-        allDepsArr[pi].forEach((v,i)=>{
-          if(v==null||v<=normalMax)return;
-          const bar=meta.data[i];
-          if(!bar)return;
-          ctx.save();
-          ctx.font='bold 9px Malgun Gothic';
-          ctx.fillStyle='#8B1A1A';
-          ctx.textAlign='center';
-          ctx.fillText(v.toFixed(0)+'%',bar.x,bar.y-4);
-          ctx.restore();
-        });
-      });
-    }
-  };
-
-  const datasets=prods.map((p,i)=>({
-    label:p.l,
-    data:allDepsArr[i].map(v=>v!=null?Math.min(v,normalMax):null),
-    backgroundColor:shades[i%shades.length],
-    borderColor:YELLOWB,borderWidth:1,borderRadius:2,
-    yAxisID:'y',
-  }));
-
-  if(roasData&&roasColor){
-    datasets.push({
-      label:'통합ROAS',
-      data:roasData.map(v=>v!=null?Math.min(v,normalMax):null),
-      type:'line',borderColor:roasColor,backgroundColor:'transparent',
-      borderWidth:2,pointRadius:3,pointBackgroundColor:roasColor,
-      tension:0.3,spanGaps:true,yAxisID:'y2',
-    });
-  }
-
-  const lp=roasData?[llpFn(prods.length,'#C05E1A')]:[];
-
-  charts.c22=new Chart(el,{type:'bar',data:{labels,datasets},
-    options:{responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{display:false},
-        tooltip:{callbacks:{label:(i)=>{
-          if(i.datasetIndex<prods.length){
-            const real=allDepsArr[i.datasetIndex][i.dataIndex];
-            return `${i.dataset.label}: ${real!=null?real.toFixed(1):''}%${real>normalMax?' (이상치)':''}`;
-          }
-          return `${i.dataset.label}: ${i.raw}%`;
-        }}}},
-      scales:{
-        x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
-        y:{type:'linear',position:'left',
-          ticks:{font:{size:9},callback:v=>v+'%'}},
-        y2:roasData?{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}:undefined,
-      }},
-    plugins:[outlierLabel,...lp]});
+  charts.c22=new Chart(el,{type:'bar',data:{labels,datasets:[
+    {label:`${p.l} 전환매출`,data:cvData,backgroundColor:YELLOW,borderColor:YELLOWB,borderWidth:1,borderRadius:3,yAxisID:'y'},
+    {label:`${p.l} 통합ROAS`,data:roasData,type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',
+      borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
+  ]},options:makeOpts(true),plugins:[llpFn(1,'#C05E1A')]});
 }
 
 // ── 3-1 ──
