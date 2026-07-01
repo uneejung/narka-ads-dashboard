@@ -476,11 +476,6 @@ function buildCharts(rows,tab){
     return `<span class="lg-item">${shape} ${label}</span>`;
   };
 
-  const prodFilterHtml=(groupId,activeKey,defs)=>
-    `<div class="prod-filter">${defs.map(p=>
-      `<button class="pfil ${p.k===activeKey?'active':''}" onclick="setProdFilter('${groupId}','${p.k}',this)">${p.l}</button>`
-    ).join('')}</div>`;
-
   return`
   <div class="section">
     <div class="sec-title"><b></b>매출 현황 <span class="sec-label">1-1 · 1-2</span></div>
