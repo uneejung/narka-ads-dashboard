@@ -301,6 +301,77 @@ async function signInWithGoogle(){
   if(error){showLoginError('로그인 오류: '+error.message);}
 }
 
+async function fetchFromSheets(ch){
+  const stEl = document.getElementById(`st_${ch}_sheets`);
+  if(stEl){stEl.textContent='⏳ 불러오는 중...';stEl.className='file-status st-load';}
+
+  const EDGE_URL = `${SUPABASE_URL}/functions/v1/fetch-sheets`;
+  const session = (await sb.auth.getSession()).data.session;
+  const token = session?.access_token;
+
+  try {
+    // 매출 데이터
+    const salesRes = await fetch(EDGE_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+      body: JSON.stringify({sheet:`${ch}_sales`})
+    });
+    const salesData = await salesRes.json();
+
+    // 광고 데이터
+    const paidRes = await fetch(EDGE_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+      body: JSON.stringify({sheet:`${ch}_paid`})
+    });
+    const paidData = await paidRes.json();
+
+    if(salesData.error || paidData.error){
+      throw new Error(salesData.error || paidData.error);
+    }
+
+    // CSV 형태로 파싱
+    const salesCSV = (salesData.values||[]).map(r=>r.join(',')).join('\n');
+    const paidCSV = (paidData.values||[]).map(r=>r.join(',')).join('\n');
+
+    const salesRows = parseSalesCSV(salesCSV, ch);
+    const paidRows = parsePaidCSV(paidCSV, ch);
+
+    DATA[ch].sales = salesRows;
+    DATA[ch].paid = paidRows.map(r=>{
+      r.mascaSpend=(r.mascaMetaSpend||0)+(r.mascaCpcSpend||0);
+      r.noseSpend=(r.noseMetaSpend||0)+(r.noseCpcSpend||0);
+      r.milkSpend=(r.milkMetaSpend||0)+(r.milkCpcSpend||0);
+      r.spxSpend=(r.spxMetaSpend||0)+(r.spxCpcSpend||0);
+      r.lipSpend=(r.lipMetaSpend||0)+(r.lipCpcSpend||0);
+      r.mascaCV=(r.mascaMetaCV||0)+(r.mascaCpcCV||0);
+      r.noseCV=(r.noseMetaCV||0)+(r.noseCpcCV||0);
+      r.milkCV=(r.milkMetaCV||0)+(r.milkCpcCV||0);
+      r.spxCV=(r.spxMetaCV||0)+(r.spxCpcCV||0);
+      r.lipCV=(r.lipMetaCV||0)+(r.lipCpcCV||0);
+      return r;
+    });
+
+    // Supabase 저장
+    await saveToSupabase(ch,'sales',salesRows.map(salesRowToDB));
+    await saveToSupabase(ch,'paid',paidRows.map(paidRowToDB));
+
+    if(stEl){
+      stEl.textContent=`✅ ${salesRows.length}일 로드 완료 (${new Date().toLocaleTimeString('ko-KR')})`;
+      stEl.className='file-status st-ok';
+    }
+    document.getElementById(`st_${ch}_sales`).textContent=`✅ ${salesRows.length}일`;
+    document.getElementById(`st_${ch}_sales`).className='file-status st-ok';
+    document.getElementById(`st_${ch}_paid`).textContent=`✅ ${paidRows.length}일`;
+    document.getElementById(`st_${ch}_paid`).className='file-status st-ok';
+
+    renderChannel(curChannel);
+  } catch(err){
+    if(stEl){stEl.textContent='❌ 오류: '+err.message;stEl.className='file-status st-err';}
+    console.error(err);
+  }
+}
+
 async function signOut(){
   await sb.auth.signOut();
   location.reload();
@@ -761,16 +832,23 @@ function buildChannelDash(ch){
 
   <!-- CSV 업로드 -->
   <div class="upload-zone">
-    <h3>${chName} CSV 업로드</h3>
-    <p>엑셀 각 시트 → CSV UTF-8 저장 후 업로드 · 자동으로 저장돼요</p>
+    <h3>${chName} 데이터 업데이트</h3>
+    <p>Google Sheets에서 자동으로 불러오거나, CSV 직접 업로드</p>
     <div class="upload-row">
       <div class="upload-item">
-        <button class="upload-btn" onclick="document.getElementById('f_${ch}_sales').click()">📊 매출 CSV</button>
+        <button class="upload-btn" style="background:#2D6A4F" onclick="fetchFromSheets('${ch}')">🔄 Sheets에서 자동 불러오기</button>
+        <div class="file-status st-wait" id="st_${ch}_sheets">클릭하면 최신 데이터 자동 반영</div>
+      </div>
+    </div>
+    <div style="margin-top:12px;font-size:11px;color:#aaa">또는 CSV 직접 업로드</div>
+    <div class="upload-row" style="margin-top:8px">
+      <div class="upload-item">
+        <button class="upload-btn" style="background:#444;font-size:11px;padding:6px 12px" onclick="document.getElementById('f_${ch}_sales').click()">📊 매출 CSV</button>
         <input type="file" id="f_${ch}_sales" class="file-input" accept=".csv,.txt" onchange="handleUpload('${ch}','sales',this.files[0])">
         <div class="file-status ${DATA[ch].sales.length?'st-ok':'st-wait'}" id="st_${ch}_sales">${DATA[ch].sales.length?`✅ ${DATA[ch].sales.length}일 로드`:'대기 중'}</div>
       </div>
       <div class="upload-item">
-        <button class="upload-btn" onclick="document.getElementById('f_${ch}_paid').click()">💰 광고 CSV</button>
+        <button class="upload-btn" style="background:#444;font-size:11px;padding:6px 12px" onclick="document.getElementById('f_${ch}_paid').click()">💰 광고 CSV</button>
         <input type="file" id="f_${ch}_paid" class="file-input" accept=".csv,.txt" onchange="handleUpload('${ch}','paid',this.files[0])">
         <div class="file-status ${DATA[ch].paid.length?'st-ok':'st-wait'}" id="st_${ch}_paid">${DATA[ch].paid.length?`✅ ${DATA[ch].paid.length}일 로드`:'대기 중'}</div>
       </div>
