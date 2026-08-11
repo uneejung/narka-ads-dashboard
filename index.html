@@ -310,11 +310,24 @@ async function fetchFromSheets(ch){
   const token = session?.access_token;
 
   try {
+    // 채널별 시트 ID & 탭 이름 설정
+    const SHEET_CONFIG = {
+      oy: {
+        sales: { id: '1cL2Y5W-O7PSs8CCcLo2xrl6RXB68a5nbJvjroi3uK4g', tab: '[전체] Daily' },
+        paid:  { id: '1cL2Y5W-O7PSs8CCcLo2xrl6RXB68a5nbJvjroi3uK4g', tab: '[국내]paid' },
+      },
+      js: {
+        sales: { id: '1VYChlkN9fIggDrh8YuCj7sgML1aIsAcHUVLUFPnkEB0', tab: 'daily 매출 대시보드' },
+        paid:  { id: '1VYChlkN9fIggDrh8YuCj7sgML1aIsAcHUVLUFPnkEB0', tab: 'daily 매출 대시보드' },
+      },
+    };
+    const cfg = SHEET_CONFIG[ch];
+
     // 매출 데이터
     const salesRes = await fetch(EDGE_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
-      body: JSON.stringify({sheet:`${ch}_sales`})
+      body: JSON.stringify({ spreadsheetId: cfg.sales.id, sheetName: cfg.sales.tab })
     });
     const salesData = await salesRes.json();
 
@@ -322,7 +335,7 @@ async function fetchFromSheets(ch){
     const paidRes = await fetch(EDGE_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
-      body: JSON.stringify({sheet:`${ch}_paid`})
+      body: JSON.stringify({ spreadsheetId: cfg.paid.id, sheetName: cfg.paid.tab })
     });
     const paidData = await paidRes.json();
 
