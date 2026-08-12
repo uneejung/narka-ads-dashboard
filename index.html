@@ -311,59 +311,27 @@ async function fetchFromSheets(ch){
 
   try {
     // 채널별 시트 ID & 탭 이름 설정
-    const SHEET_CONFIG = {
-      oy: {
-        sales: { id: '1cL2Y5W-O7PSs8CCcLo2xrl6RXB68a5nbJvjroi3uK4g', tab: '[전체] Daily' },
-        paid:  { id: '1cL2Y5W-O7PSs8CCcLo2xrl6RXB68a5nbJvjroi3uK4g', tab: '[국내]paid' },
-      },
-      js: {
-        sales: { id: '1VYChlkN9fIggDrh8YuCj7sgML1aIsAcHUVLUFPnkEB0', tab: 'daily 매출 대시보드' },
-        paid:  { id: '1VYChlkN9fIggDrh8YuCj7sgML1aIsAcHUVLUFPnkEB0', tab: 'daily 매출 대시보드' },
-      },
-    };
-    const cfg = SHEET_CONFIG[ch];
+    // 통합 시트에서 채널별 탭 읽기
+    const UNIFIED_SHEET_ID = '1r9O-xRrkhbPbj3SlsEjIbM63r11DJHUDTK-lOFbO7xU';
+    const TAB_NAME = ch === 'oy' ? '올리브영' : '자사몰';
 
-    // 매출 데이터
     const salesRes = await fetch(EDGE_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
-      body: JSON.stringify({ spreadsheetId: cfg.sales.id, sheetName: cfg.sales.tab })
+      body: JSON.stringify({ spreadsheetId: UNIFIED_SHEET_ID, sheetName: TAB_NAME })
     });
     const salesData = await salesRes.json();
+    // 통합 시트 - 매출+광고 모두 한 탭에 포함
 
-    // 광고 데이터
-    const paidRes = await fetch(EDGE_URL, {
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
-      body: JSON.stringify({ spreadsheetId: cfg.paid.id, sheetName: cfg.paid.tab })
-    });
-    const paidData = await paidRes.json();
-
-    if(salesData.error || paidData.error){
-      throw new Error(salesData.error || paidData.error);
+    if(salesData.error){
+      throw new Error(salesData.error);
     }
 
-    // CSV 형태로 파싱
-    const salesCSV = (salesData.values||[]).map(r=>r.join(',')).join('\n');
-    const paidCSV = (paidData.values||[]).map(r=>r.join(',')).join('\n');
-
-    const salesRows = parseSalesCSV(salesCSV, ch);
-    const paidRows = parsePaidCSV(paidCSV, ch);
+    // 통합 시트 파싱
+    const {sales:salesRows, paid:paidRows} = parseUnifiedSheet(salesData.values||[], ch);
 
     DATA[ch].sales = salesRows;
-    DATA[ch].paid = paidRows.map(r=>{
-      r.mascaSpend=(r.mascaMetaSpend||0)+(r.mascaCpcSpend||0);
-      r.noseSpend=(r.noseMetaSpend||0)+(r.noseCpcSpend||0);
-      r.milkSpend=(r.milkMetaSpend||0)+(r.milkCpcSpend||0);
-      r.spxSpend=(r.spxMetaSpend||0)+(r.spxCpcSpend||0);
-      r.lipSpend=(r.lipMetaSpend||0)+(r.lipCpcSpend||0);
-      r.mascaCV=(r.mascaMetaCV||0)+(r.mascaCpcCV||0);
-      r.noseCV=(r.noseMetaCV||0)+(r.noseCpcCV||0);
-      r.milkCV=(r.milkMetaCV||0)+(r.milkCpcCV||0);
-      r.spxCV=(r.spxMetaCV||0)+(r.spxCpcCV||0);
-      r.lipCV=(r.lipMetaCV||0)+(r.lipCpcCV||0);
-      return r;
-    });
+    DATA[ch].paid = paidRows;
 
     // Supabase 저장
     await saveToSupabase(ch,'sales',salesRows.map(salesRowToDB));
@@ -373,10 +341,10 @@ async function fetchFromSheets(ch){
       stEl.textContent=`✅ ${salesRows.length}일 로드 완료 (${new Date().toLocaleTimeString('ko-KR')})`;
       stEl.className='file-status st-ok';
     }
-    document.getElementById(`st_${ch}_sales`).textContent=`✅ ${salesRows.length}일`;
-    document.getElementById(`st_${ch}_sales`).className='file-status st-ok';
-    document.getElementById(`st_${ch}_paid`).textContent=`✅ ${paidRows.length}일`;
-    document.getElementById(`st_${ch}_paid`).className='file-status st-ok';
+    const stS=document.getElementById(`st_${ch}_sales`);
+    const stP=document.getElementById(`st_${ch}_paid`);
+    if(stS){stS.textContent=`✅ ${salesRows.length}일`;stS.className='file-status st-ok';}
+    if(stP){stP.textContent=`✅ ${paidRows.length}일`;stP.className='file-status st-ok';}
 
     renderChannel(curChannel);
   } catch(err){
@@ -501,6 +469,91 @@ function updateStatusBadge(ch,key,count){
 }
 
 /* ── CSV 파싱 ── */
+function parseUnifiedSheet(values, ch){
+  if(!values||values.length<4)return{sales:[],paid:[]};
+
+  const g=(i,r)=>{ const v=r[i]; return v!=null&&v!==''?parseFloat(String(v).replace(/,|%/g,''))||0:0; };
+  const gDate=(r)=>{
+    const v=r[0];if(!v)return null;
+    const s=String(v).trim();
+    const m=s.match(/(\d{2,4})[.\-\/\s]+(\d{1,2})[.\-\/\s]+(\d{1,2})/);
+    if(m){let y=+m[1];if(y<100)y+=2000;return new Date(y,+m[2]-1,+m[3]);}
+    const d=new Date(s);return isNaN(d)?null:d;
+  };
+
+  const sales=[], paid=[];
+
+  if(ch==='oy'){
+    // 올리브영 탭 파싱 (4행부터 데이터, 0-based index)
+    for(let i=3;i<values.length;i++){
+      const r=values[i];
+      const dt=gDate(r);
+      if(!dt||dt.getFullYear()<2024||dt.getFullYear()>2030)continue;
+      const total=g(2,r), online=g(1,r);
+      if(total===0&&online===0)continue;
+
+      sales.push({date:dt, total, online,
+        masca:g(9,r), nose:g(10,r), milk:g(11,r), spx:g(8,r), matcha:g(7,r),
+      });
+      paid.push({date:dt,
+        adSales:g(30,r), metaSales:g(31,r), cpcSales:g(32,r),
+        adSpend:g(27,r), metaSpend:g(28,r), cpcSpend:g(29,r),
+        mascaSpend:g(60,r), noseSpend:g(61,r), milkSpend:g(62,r), spxSpend:g(59,r),
+        lipSpend:0,
+        mascaMetaSpend:g(65,r), mascaCpcSpend:g(70,r),
+        noseMetaSpend:g(66,r), noseCpcSpend:g(71,r),
+        milkMetaSpend:g(67,r), milkCpcSpend:g(72,r),
+        spxMetaSpend:g(64,r), spxCpcSpend:g(69,r),
+        lipMetaSpend:0, lipCpcSpend:0,
+        mascaCV:g(35,r), noseCV:g(36,r), milkCV:g(37,r), spxCV:g(34,r), lipCV:0,
+        mascaMetaCV:g(50,r), mascaCpcCV:g(40,r),
+        noseMetaCV:g(51,r), noseCpcCV:g(41,r),
+        milkMetaCV:g(52,r), milkCpcCV:g(42,r),
+        spxMetaCV:g(49,r), spxCpcCV:g(39,r),
+        lipMetaCV:0, lipCpcCV:0,
+      });
+    }
+  } else {
+    // 자사몰 탭 파싱
+    // A=0날짜, E=4전체매출, G=6자사몰매출(online으로 사용)
+    // H=7말차, I=8슈퍼픽스, J=9헤어마스카라, K=10노세범, L=11헤어밀크
+    // N=13광고지출전체, O=14CRM, P=15META
+    // Q=16말차지출, R=17슈퍼픽스지출, S=18헤어마스카라지출, T=19노세범지출, U=20헤어밀크지출
+    // W=22광고전환전체, X=23말차전환, Y=24슈퍼픽스전환, Z=25헤어마스카라전환, AA=26노세범전환, AB=27헤어밀크전환
+    for(let i=3;i<values.length;i++){
+      const r=values[i];
+      const dt=gDate(r);
+      if(!dt||dt.getFullYear()<2024||dt.getFullYear()>2030)continue;
+      const total=g(4,r), online=g(6,r);
+      if(total===0&&online===0)continue;
+
+      sales.push({date:dt, total, online,
+        matcha:g(7,r), spx:g(8,r), masca:g(9,r), nose:g(10,r), milk:g(11,r),
+      });
+      paid.push({date:dt,
+        adSales:g(22,r), metaSales:g(22,r), cpcSales:0,
+        adSpend:g(13,r), metaSpend:g(15,r), cpcSpend:g(14,r), // P=META, O=CRM(CPC로)
+        mascaSpend:g(18,r), noseSpend:g(19,r), milkSpend:g(20,r), spxSpend:g(17,r),
+        matcaSpend:g(16,r), lipSpend:0,
+        mascaMetaSpend:g(18,r), mascaCpcSpend:0,
+        noseMetaSpend:g(19,r), noseCpcSpend:0,
+        milkMetaSpend:g(20,r), milkCpcSpend:0,
+        spxMetaSpend:g(17,r), spxCpcSpend:0,
+        lipMetaSpend:0, lipCpcSpend:0,
+        mascaCV:g(25,r), noseCV:g(26,r), milkCV:g(27,r), spxCV:g(24,r),
+        matchaCV:g(23,r), lipCV:0,
+        mascaMetaCV:g(25,r), mascaCpcCV:0,
+        noseMetaCV:g(26,r), noseCpcCV:0,
+        milkMetaCV:g(27,r), milkCpcCV:0,
+        spxMetaCV:g(24,r), spxCpcCV:0,
+        lipMetaCV:0, lipCpcCV:0,
+      });
+    }
+  }
+
+  return{sales,paid};
+}
+
 function parseSalesCSV(text,ch){
   dbLog=[];
   const rows=parseCSV(text);
@@ -508,6 +561,7 @@ function parseSalesCSV(text,ch){
   for(let i=0;i<Math.min(10,rows.length);i++){
     if(rows[i].some(c=>c==='날짜'||c==='요일')){hIdx=i;break;}
   }
+  dlog('헤더 행',hIdx>=0?hIdx+'번째':'없음',hIdx>=0?'dok':'derr');
   if(hIdx<0)return[];
   const hdr=rows[hIdx];
   const fi=kws=>{for(const kw of kws){const i=hdr.findIndex(h=>h.includes(kw));if(i>=0)return i;}return -1;};
@@ -528,50 +582,13 @@ function parseSalesCSV(text,ch){
     const total=iTotal>=0?pn(r[iTotal]):0;
     const online=iOnline>=0?pn(r[iOnline]):0;
     if(total===0&&online===0)continue;
-    out.push({date:dt,
-      total,online,
-      masca:iMasca>=0?pn(r[iMasca]):0,
-      nose:iNose>=0?pn(r[iNose]):0,
-      milk:iMilk>=0?pn(r[iMilk]):0,
-      lip:iLip>=0?pn(r[iLip]):0,
-      spx:iSpx>=0?pn(r[iSpx]):0,
-      matcha:iMatcha>=0?pn(r[iMatcha]):0,
+    out.push({date:dt,total,online,
+      masca:iMasca>=0?pn(r[iMasca]):0,nose:iNose>=0?pn(r[iNose]):0,
+      milk:iMilk>=0?pn(r[iMilk]):0,lip:iLip>=0?pn(r[iLip]):0,
+      spx:iSpx>=0?pn(r[iSpx]):0,matcha:iMatcha>=0?pn(r[iMatcha]):0,
     });
   }
-  return out.sort((a,b)=>a.date-b.date);
-}
-
-function parsePaidCSV(text,ch){
-  const rows=parseCSV(text);
-  let hIdx=-1;
-  for(let i=0;i<Math.min(10,rows.length);i++){
-    if(rows[i].some(c=>c==='날짜'||c==='요일')){hIdx=i;break;}
-  }
-  if(hIdx<0)return[];
-  const safe=(r,i)=>i<r.length?pn(r[i]):0;
-  const out=[];
-  for(let i=hIdx+1;i<rows.length;i++){
-    const r=rows[i];
-    const dt=toDate(r[0]);
-    if(!dt||dt.getFullYear()<2024||dt.getFullYear()>2030)continue;
-    const adSpend=safe(r,5);
-    const adSales=safe(r,2);
-    if(adSpend===0&&adSales===0)continue;
-    out.push({date:dt,
-      adSales,metaSales:safe(r,3),cpcSales:safe(r,4),
-      adSpend,metaSpend:safe(r,6),cpcSpend:safe(r,7),
-      mascaMetaSpend:safe(r,18),mascaCpcSpend:safe(r,19),
-      noseMetaSpend:safe(r,20),noseCpcSpend:safe(r,21),
-      milkMetaSpend:safe(r,22),milkCpcSpend:safe(r,23),
-      spxMetaSpend:safe(r,24),spxCpcSpend:safe(r,25),
-      lipMetaSpend:safe(r,26),lipCpcSpend:safe(r,27),
-      mascaMetaCV:safe(r,33),mascaCpcCV:safe(r,34),
-      noseMetaCV:safe(r,35),noseCpcCV:safe(r,36),
-      milkMetaCV:safe(r,37),milkCpcCV:safe(r,38),
-      spxMetaCV:safe(r,39),spxCpcCV:safe(r,40),
-      lipMetaCV:safe(r,41),lipCpcCV:safe(r,42),
-    });
-  }
+  dlog('파싱 완료',out.length+'개',out.length>0?'dok':'derr');
   return out.sort((a,b)=>a.date-b.date);
 }
 
@@ -796,6 +813,113 @@ function renderIntegratedCharts(){
 }
 
 /* ── 채널별 대시보드 (올리브영/자사몰) ── */
+function buildJsDash(rows, valid, tab){
+  const S=f=>valid.reduce((t,r)=>t+(r[f]||0),0);
+  const tot=S('total'),adSp=S('adSpend'),adCv=S('adSales');
+  const roas=adSp>0?adCv/adSp:null;
+  const broas=adSp>0?S('online')/adSp:null;
+  const pf=(gid,ak,defs)=>`<div class="prod-filter">${defs.map(p=>`<button class="pfil ${p.k===ak?'active':''}" onclick="setProd('js','${gid}','${p.k}',this)">${p.l}</button>`).join('')}</div>`;
+  const lg=(color,label,type='sq',dash=false)=>{
+    const shape=type==='sq'?`<span class="lg-sq" style="background:${color}"></span>`
+      :dash?`<span style="display:inline-block;width:16px;border-top:2px dashed ${color}"></span>`
+      :`<span class="lg-line" style="background:${color}"></span>`;
+    return `<span class="lg-item">${shape} ${label}</span>`;
+  };
+  const JS_PRODS=[{k:'all',l:'전체'},{k:'matcha',l:'말차샴푸'},{k:'spx',l:'슈퍼픽스'},{k:'masca',l:'헤어마스카라'},{k:'nose',l:'노세범'},{k:'milk',l:'헤어밀크'}];
+
+  return `
+  <div class="tabs">
+    <div class="tab ${tab==='daily'?'active':''}" onclick="switchTab('js','daily',this)">📅 Daily</div>
+    <div class="tab ${tab==='weekly'?'active':''}" onclick="switchTab('js','weekly',this)">📆 Weekly</div>
+    <div class="tab ${tab==='monthly'?'active':''}" onclick="switchTab('js','monthly',this)">📊 Monthly</div>
+  </div>
+  <div class="date-range-bar">
+    <span class="dr-label">기간</span>
+    <input type="date" id="dr_js_start" class="dr-input" onchange="setDR('js')">
+    <span class="dr-sep">~</span>
+    <input type="date" id="dr_js_end" class="dr-input" onchange="setDR('js')">
+    <button class="dr-reset" onclick="resetDR('js')">전체 기간</button>
+    <span class="dr-info" id="dr_js_info"></span>
+  </div>
+  <div class="upload-zone">
+    <h3>자사몰 데이터 업데이트</h3>
+    <p>Google Sheets에서 자동으로 불러오거나, CSV 직접 업로드</p>
+    <div class="upload-row">
+      <div class="upload-item">
+        <button class="upload-btn" style="background:#2D6A4F" onclick="fetchFromSheets('js')">🔄 Sheets에서 자동 불러오기</button>
+        <div class="file-status st-wait" id="st_js_sheets">클릭하면 최신 데이터 자동 반영</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- KPI 5개 -->
+  <div class="kpi-row">
+    <div class="kpi"><div class="kpi-label">전체 매출</div><div class="kpi-val">${fmt(Math.round(tot/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div></div>
+    <div class="kpi"><div class="kpi-label">광고 지출</div><div class="kpi-val">${fmt(Math.round(adSp/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div><div class="kpi-sub c-neu">지출/매출 ${fmtPct(tot>0?adSp/tot:null)}</div></div>
+    <div class="kpi"><div class="kpi-label">광고 전환매출</div><div class="kpi-val">${fmt(Math.round(adCv/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div><div class="kpi-sub ${adSp>0&&adCv/adSp<1.57?'c-dn':'c-up'}">의존도 ${fmtPct(tot>0?adCv/tot:null)}</div></div>
+    <div class="kpi"><div class="kpi-label">매체 ROAS (META)</div><div class="kpi-val ${roas&&roas>=1.57?'c-up':'c-dn'}">${fmtRoas(roas)}</div><div class="kpi-sub c-neu">BEP ${BEP.js}%</div></div>
+    <div class="kpi" style="border-left:3px solid #7B2D8B"><div class="kpi-label">B-ROAS</div><div class="kpi-val" style="color:#7B2D8B">${fmtRoas(broas)}</div><div class="kpi-sub c-neu">온라인매출 ÷ 광고지출</div></div>
+  </div>
+
+  <!-- 트래픽 섹션 -->
+  <div class="section">
+    <div class="sec-title"><b></b>트래픽 현황</div>
+    <div class="chart-card" style="margin-bottom:14px">
+      <h4>유입자수 · 구매건수 · 전환율</h4>
+      <div class="chart-sub">막대: 유입자수(좌) · 구매건수(좌) / 꺾은선: 전환율(우, %)</div>
+      <div class="legend">
+        ${lg('rgba(184,134,11,0.6)','유입자수')} ${lg('rgba(44,44,44,0.8)','구매건수')} ${lg('#C05E1A','전환율(%)','line')}
+      </div>
+      <div class="chart-wrap-tall"><canvas id="js_traffic"></canvas></div>
+    </div>
+
+    <!-- 1행 매출 -->
+    <div class="sec-title"><b></b>매출 현황 <span class="sec-label">1-1 · 1-2</span></div>
+    <div class="chart-grid-2">
+      <div class="chart-card">
+        <h4>1-1 · 전체 매출 추이</h4>
+        <div class="chart-sub">전체매출 추이 (META 광고비 포함)</div>
+        <div class="legend">
+          ${lg('rgba(160,160,160,0.5)','전체 매출')} ${lg('rgba(44,44,44,0.85)','자사몰 매출')}
+          ${lg('#B8860B','BROAS(%)','line',true)}
+        </div>
+        <div class="chart-wrap-tall"><canvas id="js_c11"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h4>1-2 · Blended ROAS (%) <small style="font-weight:400;color:#aaa">자사몰 매출 기준</small></h4>
+        <div class="chart-sub">광고 전환매출 추이 + BROAS</div>
+        <div class="legend">
+          ${lg('#2C2C2C','광고 전환매출')} ${lg('#C05E1A','B-ROAS(%)','line')}
+          ${lg('#7B2D8B','BEP ${BEP.js}% 기준','line',true)}
+        </div>
+        <div class="chart-wrap-tall"><canvas id="js_c12"></canvas></div>
+      </div>
+    </div>
+
+    <!-- 2행 품목별 -->
+    <div class="sec-title" style="margin-top:4px"><b></b>품목별 성과 <span class="sec-label">2-1 · 2-2</span></div>
+    <div class="chart-grid-2">
+      <div class="chart-card">
+        <h4>2-1 · 품목별 매출 추이</h4>
+        <div class="chart-sub">품목별 전체 매출 (원)</div>
+        ${pf('p21',curProd['js'].p21,JS_PRODS)}
+        <div class="legend">${lg('rgba(255,200,0,0.9)','품목 매출(원)')}</div>
+        <div class="chart-wrap"><canvas id="js_c21"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h4>2-2 · 품목별 ROAS (%) <small style="font-weight:400;color:#aaa">META 기준</small></h4>
+        <div class="chart-sub">광고 전환매출 ÷ 광고지출 + BEP 기준선</div>
+        ${pf('p22',curProd['js'].p22,JS_PRODS)}
+        <div class="legend">
+          ${lg('rgba(255,200,0,0.9)','광고 전환매출(원)')} ${lg('#C05E1A','ROAS(%)','line')}
+          ${lg('#8B1A1A','BEP ${BEP.js}% 기준','line',true)}
+        </div>
+        <div class="chart-wrap"><canvas id="js_c22"></canvas></div>
+      </div>
+    </div>
+  </div>`;
+}
+
 function buildChannelDash(ch){
   const chName=ch==='oy'?'올리브영':'자사몰';
   const tabState=curTab[ch];
@@ -824,6 +948,9 @@ function buildChannelDash(ch){
   };
   const avgOnlineRatio=avg(valid,'onlineRatio');
   const ratioLabel=avgOnlineRatio!=null?`평균 ${fmtPct(avgOnlineRatio)}`:'';
+
+  // 자사몰은 별도 구조
+  if(ch==='js') return buildJsDash(rows, valid, tab);
 
   return `
   <!-- 기간 탭 -->
@@ -1151,10 +1278,126 @@ function renderChannelCharts(ch){
   }}},
   [llpFn(1,'#C05E1A')]);
 
-  render21(ch,R,labels,avgRatio);
-  render22(ch,R,labels,avgRatio);
-  render31(ch,R,labels);
-  render32(ch,R,labels);
+  if(ch==='js'){
+    renderJsCharts(ch,R,labels,avgRatio);
+  } else {
+    render21(ch,R,labels,avgRatio);
+    render22(ch,R,labels,avgRatio);
+    render31(ch,R,labels);
+    render32(ch,R,labels);
+  }
+}
+
+function renderJsCharts(ch,R,labels,avgRatio){
+  const YELLOW='rgba(255,200,0,0.88)', YELLOWB='#B8860B';
+  const shades=['rgba(255,200,0,0.9)','rgba(225,170,0,0.85)','rgba(195,140,0,0.8)','rgba(160,110,0,0.75)','rgba(130,85,0,0.7)'];
+  const JS_PRODS_NO_ALL=[{k:'matcha',l:'말차샴푸'},{k:'spx',l:'슈퍼픽스'},{k:'masca',l:'헤어마스카라'},{k:'nose',l:'노세범'},{k:'milk',l:'헤어밀크'}];
+
+  const mk=(id,cfg,plugins=[])=>{
+    const el=document.getElementById(id);if(!el)return;
+    if(charts[id]){try{charts[id].destroy();}catch(e){}}
+    charts[id]=new Chart(el,{...cfg,plugins});
+  };
+
+  // 트래픽
+  mk('js_traffic',{type:'bar',data:{labels,datasets:[
+    {label:'유입자수',data:R.map(r=>r.visitors||0),backgroundColor:'rgba(184,134,11,0.5)',borderColor:'#B8860B',borderWidth:1,borderRadius:3,yAxisID:'y'},
+    {label:'구매건수',data:R.map(r=>r.purchases||0),backgroundColor:'rgba(44,44,44,0.7)',borderColor:'#2C2C2C',borderWidth:1,borderRadius:3,yAxisID:'y'},
+    {label:'전환율',data:R.map(r=>r.cvRate||null),type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
+  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
+    tooltip:{callbacks:{label:i=>i.yAxisID==='y2'?`전환율: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}`}}},
+    scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
+      y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()}},
+      y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}}}});
+
+  // 1-1 전체매출 + BROAS 점선
+  mk('js_c11',{type:'bar',data:{labels,datasets:[
+    {label:'전체 매출',data:R.map(r=>Math.round((r.total||0)/1e4)),backgroundColor:'rgba(160,160,160,0.5)',borderColor:'#999',borderWidth:1,borderRadius:3,yAxisID:'y'},
+    {label:'자사몰 매출',data:R.map(r=>Math.round((r.online||0)/1e4)),backgroundColor:'rgba(44,44,44,0.85)',borderColor:'#2C2C2C',borderWidth:1,borderRadius:3,yAxisID:'y'},
+    {label:'B-ROAS',data:R.map(r=>r.bRoas!=null?Math.round(r.bRoas*100):null),type:'line',borderColor:'#7B2D8B',backgroundColor:'transparent',borderWidth:2,borderDash:[5,3],pointRadius:3,tension:0.3,spanGaps:true,yAxisID:'y2'},
+  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
+    tooltip:{callbacks:{label:i=>i.datasetIndex===2?`B-ROAS: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
+    scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
+      y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
+      y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}}},
+  },[llpFn(2,'#7B2D8B')]);
+
+  // BEP 기준선 플러그인
+  const bepLine=(bepVal,color='#8B1A1A')=>({
+    id:'bepLine',
+    afterDraw(chart){
+      const {ctx,scales:{y2}}=chart;
+      if(!y2)return;
+      const y=y2.getPixelForValue(bepVal);
+      const {left,right}=chart.chartArea;
+      ctx.save();ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.setLineDash([6,3]);
+      ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(right,y);ctx.stroke();
+      ctx.fillStyle=color;ctx.font='bold 9px Malgun Gothic';ctx.textAlign='right';
+      ctx.fillText('BEP '+bepVal+'%',right-4,y-4);ctx.restore();
+    }
+  });
+
+  // 1-2 광고전환매출 + BROAS + BEP 기준선
+  mk('js_c12',{type:'bar',data:{labels,datasets:[
+    {label:'광고 전환매출',data:R.map(r=>Math.round((r.adSales||0)/1e4)),backgroundColor:'rgba(44,44,44,0.85)',borderColor:'#2C2C2C',borderWidth:1,borderRadius:3,yAxisID:'y'},
+    {label:'B-ROAS',data:R.map(r=>r.adSpend>0?Math.round(r.online/r.adSpend*100):null),type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
+  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
+    tooltip:{callbacks:{label:i=>i.datasetIndex===1?`B-ROAS: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
+    scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
+      y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
+      y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}}},
+  },[llpFn(1,'#C05E1A'),bepLine(BEP.js)]);
+
+  // 2-1 품목별 매출 막대 (노란색)
+  const p21key=curProd[ch].p21;
+  if(p21key==='all'){
+    mk('js_c21',{type:'bar',data:{labels,datasets:JS_PRODS_NO_ALL.map((p,i)=>({
+      label:p.l,data:R.map(r=>Math.round((r[p.k]||0)/1e4)),
+      backgroundColor:shades[i%shades.length],borderColor:YELLOWB,borderWidth:1,borderRadius:2,
+    }))},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
+      tooltip:{callbacks:{label:i=>`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
+      scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},y:{ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}}}}});
+  } else {
+    mk('js_c21',{type:'bar',data:{labels,datasets:[
+      {label:p21key+' 매출',data:R.map(r=>Math.round((r[p21key]||0)/1e4)),backgroundColor:YELLOW,borderColor:YELLOWB,borderWidth:1,borderRadius:3},
+    ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
+      tooltip:{callbacks:{label:i=>`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
+      scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},y:{ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}}}}});
+  }
+
+  // 2-2 품목별 전환매출 막대 + ROAS 꺾은선 + BEP 기준선
+  const p22key=curProd[ch].p22;
+  const roasColors=['#C05E1A','#2a78d6','#7B2D8B','#1baf7a','#B8860B'];
+  if(p22key==='all'){
+    const barDs=JS_PRODS_NO_ALL.map((p,i)=>({
+      label:p.l+' 전환',data:R.map(r=>Math.round((r[p.k+'CV']||0)/1e4)),
+      backgroundColor:shades[i%shades.length],borderColor:YELLOWB,borderWidth:1,borderRadius:2,yAxisID:'y',
+    }));
+    const lineDs=JS_PRODS_NO_ALL.map((p,i)=>({
+      label:p.l+' ROAS',data:R.map(r=>r[p.k+'Roas']!=null?Math.round(r[p.k+'Roas']*100):null),
+      type:'line',borderColor:roasColors[i%roasColors.length],backgroundColor:'transparent',
+      borderWidth:1.5,pointRadius:2,tension:0.3,spanGaps:true,yAxisID:'y2',
+    }));
+    mk('js_c22',{type:'bar',data:{labels,datasets:[...barDs,...lineDs]},options:{
+      responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
+        tooltip:{callbacks:{label:i=>i.yAxisID==='y2'?`${i.dataset.label}: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
+      scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
+        y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
+        y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}}},
+    },[bepLine(BEP.js)]);
+  } else {
+    const cvData=R.map(r=>Math.round((r[p22key+'CV']||0)/1e4));
+    const roasData=R.map(r=>r[p22key+'Roas']!=null?Math.round(r[p22key+'Roas']*100):null);
+    mk('js_c22',{type:'bar',data:{labels,datasets:[
+      {label:p22key+' 전환매출',data:cvData,backgroundColor:YELLOW,borderColor:YELLOWB,borderWidth:1,borderRadius:3,yAxisID:'y'},
+      {label:p22key+' ROAS',data:roasData,type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
+    ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
+      tooltip:{callbacks:{label:i=>i.datasetIndex===1?`ROAS: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
+      scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
+        y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
+        y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}}},
+    },[llpFn(1,'#C05E1A'),bepLine(BEP.js)]);
+  }
 }
 
 const PRODS_NO_ALL=[
