@@ -355,10 +355,10 @@ async function fetchFromSheets(ch){
 
     DATA[ch].sales = salesRows;
     DATA[ch].paid = paidRows;
-
-    // Supabase 저장
-    await saveToSupabase(ch,'sales',salesRows.map(salesRowToDB));
-    await saveToSupabase(ch,'paid',paidRows.map(paidRowToDB));
+    saveLocal(ch);
+    document.getElementById('saveBar')?.classList.remove('hidden');
+    setTimeout(()=>document.getElementById('saveBar')?.classList.add('hidden'),3000);
+    document.getElementById('lastUpdate').textContent='업데이트: '+new Date().toLocaleString('ko-KR');
 
     if(stEl){
       stEl.textContent=`✅ ${salesRows.length}일 로드 완료 (${new Date().toLocaleTimeString('ko-KR')})`;
@@ -417,6 +417,26 @@ function showApp(){
 }
 
 /* ── Supabase 데이터 저장/로드 ── */
+function saveLocal(ch){
+  try{
+    localStorage.setItem('narka_'+ch, JSON.stringify({
+      sales:DATA[ch].sales, paid:DATA[ch].paid, ts:Date.now()
+    }));
+  }catch(e){console.warn('localStorage 저장 실패',e);}
+}
+
+function loadLocal(ch){
+  try{
+    const raw=localStorage.getItem('narka_'+ch);
+    if(!raw)return false;
+    const o=JSON.parse(raw);
+    if(!o.sales||!o.sales.length)return false;
+    DATA[ch].sales=o.sales.map(r=>({...r,date:new Date(r.date)}));
+    DATA[ch].paid=(o.paid||[]).map(r=>({...r,date:new Date(r.date)}));
+    return true;
+  }catch(e){return false;}
+}
+
 async function saveToSupabase(channel, type, rows){
   const table=`${channel}_${type}`;
   // 기존 데이터 삭제 후 새로 insert
@@ -436,15 +456,15 @@ async function saveToSupabase(channel, type, rows){
 }
 
 async function loadDataFromSupabase(){
-  const tables=['oy_sales','oy_paid','js_sales','js_paid'];
-  for(const table of tables){
-    const {data}=await sb.from(table).select('*').order('date',{ascending:true});
-    if(data&&data.length){
-      const [ch,type]=table.split('_');
-      const key=type==='sales'?'sales':'paid';
-      DATA[ch][key]=data.map(convertFromDB(type));
-      updateStatusBadge(ch,key,data.length);
-    }
+  // localStorage에 저장된 마지막 상태 복원 (Supabase 미사용)
+  const okOy=loadLocal('oy'), okJs=loadLocal('js');
+  if(okOy){
+    updateStatusBadge('oy','sales',DATA.oy.sales.length);
+    updateStatusBadge('oy','paid',DATA.oy.paid.length);
+  }
+  if(okJs){
+    updateStatusBadge('js','sales',DATA.js.sales.length);
+    updateStatusBadge('js','paid',DATA.js.paid.length);
   }
   renderChannel(curChannel);
 }
@@ -760,8 +780,7 @@ function parseSalesCSV(text,ch){
 function salesRowToDB(r){
   return {date:r.date.toISOString().slice(0,10),
     total:r.total,online:r.online,masca:r.masca,nose:r.nose,
-    milk:r.milk,lip:r.lip||0,spx:r.spx,matcha:r.matcha||0,
-    visitors:r.visitors||0,purchases:r.purchases||0,cv_rate:r.cvRate||0};
+    milk:r.milk,lip:r.lip||0,spx:r.spx};
 }
 
 function paidRowToDB(r){
@@ -821,9 +840,11 @@ function handleUpload(ch,type,file){
       else{el.textContent='❌ 파싱 실패';el.className='file-status st-err';}
     }
 
-    // Supabase 저장
-    const dbRows=rows.map(type==='sales'?salesRowToDB:paidRowToDB);
-    saveToSupabase(ch,type==='sales'?'sales':'paid',dbRows);
+    // localStorage 저장
+    saveLocal(ch);
+    document.getElementById('saveBar')?.classList.remove('hidden');
+    setTimeout(()=>document.getElementById('saveBar')?.classList.add('hidden'),3000);
+    document.getElementById('lastUpdate').textContent='업데이트: '+new Date().toLocaleString('ko-KR');
 
     renderChannel(curChannel);
   });
