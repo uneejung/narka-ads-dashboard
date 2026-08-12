@@ -527,25 +527,29 @@ function parseOySheets(raw1, raw2){
   const sales=[], paid=[];
   const startRow = 2; // 3행부터 (0-based index 2)
 
-  // [전체] Daily: 헤더 2행, 데이터 3행(index 2)~
-  // 날짜=A(0), 온라인주문=B(1), 국내+글로벌출고=C(2), 국내=D(3), 온라인출고=E(4), 오프라인=F(5), 글로벌=G(6)
-  // 말차=H(7), 슈퍼픽스=I(8), 마스카라=J(9), 노세범=K(10), 밀크=L(11)
-  for(let i=2; i<raw1.length; i++){
+  // [전체] Daily: 헤더 3행, 데이터 4행(index 3)~
+  // 날짜=E(4), 전체매출=J(9), 온라인매출=K(10)
+  // 품목별: 말차=?, 슈퍼픽스=?, 마스카라=?, 노세범=?, 밀크=?
+  for(let i=3; i<raw1.length; i++){
     const r1=raw1[i];
-    // 날짜는 A열(0) 또는 E열(4) 중 날짜 형식인 것
-    let dt=gDate(r1);
-    if(!dt&&r1[4]){
-      const s=String(r1[4]).trim();
-      const m=s.match(/(\d{2,4})[.\-\/\s]+(\d{1,2})[.\-\/\s]+(\d{1,2})/);
-      if(m){let y=+m[1];if(y<100)y+=2000;dt=new Date(y,+m[2]-1,+m[3]);}
-    }
-    if(!dt||dt.getFullYear()<2024||dt.getFullYear()>2030)continue;
-    const total=g(2,r1), online=g(1,r1);
+    const v=r1?.[4]; if(!v)continue; // E열 = 날짜
+    const s=String(v).trim();
+    const m=s.match(/(\d{2,4})[.\-\/\s]+(\d{1,2})[.\-\/\s]+(\d{1,2})/);
+    if(!m)continue;
+    let y=+m[1];if(y<100)y+=2000;
+    const dt=new Date(y,+m[2]-1,+m[3]);
+    if(dt.getFullYear()<2024||dt.getFullYear()>2030)continue;
+
+    const total=g(9,r1), online=g(10,r1);
     if(total===0&&online===0)continue;
 
     sales.push({date:dt,
       total, online,
-      matcha:g(7,r1), spx:g(8,r1), masca:g(9,r1), nose:g(10,r1), milk:g(11,r1),
+      matcha:g(29,r1),                              // AD
+      spx:g(25,r1)+g(26,r1),                        // Z+AA
+      masca:g(16,r1)+g(17,r1)+g(18,r1)+g(19,r1),    // Q+R+S+T
+      nose:g(20,r1)+g(27,r1)+g(28,r1),              // U+AB+AC
+      milk:g(21,r1)+g(23,r1)+g(24,r1),              // V+X+Y
     });
   }
 
