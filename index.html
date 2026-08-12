@@ -243,6 +243,19 @@ let curTab = {oy:'monthly', js:'monthly', integrated:'monthly'};
 let drStart = {oy:null, js:null};
 let drEnd = {oy:null, js:null};
 let curProd = {oy:{p21:'all',p22:'all',p32:'all',ch31:'all'}, js:{p21:'all',p22:'all',p32:'all',ch31:'all'}};
+
+// BEP ROAS 기준선 (원가율 시트 기준)
+const BEP = {
+  oy: 886,     // 올리브영 단품 평균 BEP ROAS %
+  oy_kit: 828, // 올리브영 기획세트
+  js: 157,     // 자사몰 단품 평균 BEP ROAS %
+};
+
+// 수익성 고정값
+const COST_RATES = {
+  oy: { shipout: 0.39, logistics: 0.02, channel: 0.229, vat: 1.1 },
+  js: { pg: 0.033, logistics3pl: 0.09, vat: 1.1 },
+};
 let charts = {};
 let dbLog = [];
 let currentUser = null;
@@ -1704,10 +1717,11 @@ function render31(ch,R,labels){
   if(key==='all'){
     datasets=[
       {label:'전체 광고비',data:R.map(r=>Math.round((r.adSpend||0)/1e4)),backgroundColor:'rgba(44,44,44,0.85)',borderColor:'#2C2C2C',borderWidth:1,borderRadius:3,yAxisID:'y'},
-      {label:'ROAS',data:R.map(r=>r.totalRoas!=null?Math.round(r.totalRoas*100):null),type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2.5,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
+      {label:'META ROAS',data:R.map(r=>r.metaRoas!=null?Math.round(r.metaRoas*100):null),type:'line',borderColor:'#2a78d6',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#2a78d6',tension:0.3,spanGaps:true,yAxisID:'y2'},
+      {label:'CPC ROAS',data:R.map(r=>r.cpcRoas!=null?Math.round(r.cpcRoas*100):null),type:'line',borderColor:'#64BEF0',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#64BEF0',tension:0.3,spanGaps:true,yAxisID:'y2'},
     ];
-    roasDsIdx=1;roasColor='#C05E1A';
-    if(lgEl)lgEl.innerHTML=lgHtml('#2C2C2C','전체 광고비')+lgHtml('#C05E1A','ROAS(%)',true);
+    roasDsIdx=1;roasColor='#2a78d6';
+    if(lgEl)lgEl.innerHTML=lgHtml('#2C2C2C','전체 광고비')+lgHtml('#2a78d6','META ROAS(%)',true)+lgHtml('#64BEF0','CPC ROAS(%)',true);
   } else if(key==='meta'){
     datasets=[
       {label:'META 광고비',data:R.map(r=>Math.round((r.metaSpend||0)/1e4)),backgroundColor:'rgba(42,120,214,0.8)',borderColor:'#2a78d6',borderWidth:1,borderRadius:3,yAxisID:'y'},
@@ -1724,7 +1738,7 @@ function render31(ch,R,labels){
     if(lgEl)lgEl.innerHTML=lgHtml('rgba(100,190,240,0.8)','CPC 광고비')+lgHtml('#64BEF0','CPC ROAS(%)',true);
   }
 
-  const plugins31 = curChannel31==='all'
+  const plugins31 = key==='all'
     ? [llpFn(1,'#2a78d6'), llpFn(2,'#64BEF0')]
     : [llpFn(roasDsIdx,roasColor)];
   charts[id]=new Chart(el,{type:'bar',data:{labels,datasets},options:{responsive:true,maintainAspectRatio:false,
