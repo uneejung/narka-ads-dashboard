@@ -239,7 +239,7 @@ const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
 let curChannel = 'integrated';
-let curTab = {oy:'monthly', js:'monthly'};
+let curTab = {oy:'monthly', js:'monthly', integrated:'monthly'};
 let drStart = {oy:null, js:null};
 let drEnd = {oy:null, js:null};
 let curProd = {oy:{p21:'all',p22:'all',p32:'all',ch31:'all'}, js:{p21:'all',p22:'all',p32:'all',ch31:'all'}};
@@ -532,23 +532,30 @@ function parseOySheets(raw1, raw2){
     });
   }
 
-  // raw2로 paid 파싱
-  for(let i=startRow; i<raw2.length; i++){
+  // raw2([국내]paid) 파싱: 날짜=E열(index 4), 헤더 3행, 데이터 4행(index 3)~
+  // 올영data 매핑 기준 (0-based):
+  // O=K(10),P=L(11) → META지출, CPC지출
+  // V=AF(31),W=AD(29),X=X(23),Y=Z(25),Z=AB(27)
+  // AA=AG(32),AB=AE(30),AC=Y(24),AD=AA(26),AE=AC(28)
+  // AV=AW(48),AW=AU(46),AX=AQ(42),AY=AO(40),AZ=AS(44)
+  // BF=AX(49),BG=AV(47),BH=AP(41),BI=AR(43),BJ=AT(45)
+  for(let i=3; i<raw2.length; i++){
     const r2=raw2[i];
-    const dt = (() => {
-      const v=r2?.[0];if(!v)return null;
-      const s=String(v).trim();
-      const m=s.match(/(\d{2,4})[.\-\/\s]+(\d{1,2})[.\-\/\s]+(\d{1,2})/);
-      if(m){let y=+m[1];if(y<100)y+=2000;return new Date(y,+m[2]-1,+m[3]);}
-      return null;
-    })();
-    if(!dt||dt.getFullYear()<2024||dt.getFullYear()>2030)continue;
-    const adSpend=g(11,r2)+g(12,r2);
+    const v=r2?.[4]; if(!v)continue; // E열(index 4) = 날짜
+    const s=String(v).trim();
+    const m=s.match(/(\d{2,4})[.\-\/\s]+(\d{1,2})[.\-\/\s]+(\d{1,2})/);
+    if(!m)continue;
+    let y=+m[1];if(y<100)y+=2000;
+    const dt=new Date(y,+m[2]-1,+m[3]);
+    if(dt.getFullYear()<2024||dt.getFullYear()>2030)continue;
+
+    const metaSpend=g(10,r2), cpcSpend=g(11,r2);
+    const adSpend=metaSpend+cpcSpend;
     if(adSpend===0)continue;
 
     paid.push({date:dt,
       adSales:g(29,r2), metaSales:g(31,r2), cpcSales:g(32,r2),
-      adSpend, metaSpend:g(11,r2), cpcSpend:g(12,r2),
+      adSpend, metaSpend, cpcSpend,
       mascaSpend:g(59,r2), noseSpend:g(61,r2), milkSpend:g(62,r2), spxSpend:g(58,r2), lipSpend:0,
       mascaMetaSpend:g(64,r2), mascaCpcSpend:g(69,r2),
       noseMetaSpend:g(65,r2), noseCpcSpend:g(70,r2),
@@ -818,8 +825,9 @@ function renderChannel(ch){
 
 /* ── 통합 탭 ── */
 function buildIntegrated(){
-  const oyRows=getRows('oy','monthly');
-  const jsRows=getRows('js','monthly');
+  const intTab=curTab['integrated']||'monthly';
+  const oyRows=getRows('oy',intTab);
+  const jsRows=getRows('js',intTab);
   const oyValid=oyRows.filter(r=>(r.total||0)>0);
   const jsValid=jsRows.filter(r=>(r.total||0)>0);
 
@@ -849,11 +857,30 @@ function buildIntegrated(){
   const totRev=oyTot+jsTot, totAdSp=oyAdSp+jsAdSp, totOnl=oyOnl+jsOnl;
 
   return `
+  <!-- 통합탭 기간 탭 -->
+  <div class="tabs">
+    <div class="tab ${intTab==='daily'?'active':''}" onclick="switchIntTab('daily',this)">📅 Daily</div>
+    <div class="tab ${intTab==='weekly'?'active':''}" onclick="switchIntTab('weekly',this)">📆 Weekly</div>
+    <div class="tab ${intTab==='monthly'?'active':''}" onclick="switchIntTab('monthly',this)">📊 Monthly</div>
+  </div>
+
   <div class="kpi-row" style="padding:16px 20px 0">
     <div class="kpi"><div class="kpi-label">통합 전체 매출</div><div class="kpi-val">${fmt(Math.round(totRev/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div><div class="kpi-sub c-neu">OY ${fmt(Math.round(oyTot/1e8))}억 + 자사 ${fmt(Math.round(jsTot/1e8))}억</div></div>
     <div class="kpi"><div class="kpi-label">통합 온라인 매출</div><div class="kpi-val">${fmt(Math.round(totOnl/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div><div class="kpi-sub c-neu">비중 ${fmtPct(totRev>0?totOnl/totRev:null)}</div></div>
     <div class="kpi"><div class="kpi-label">통합 광고 지출</div><div class="kpi-val">${fmt(Math.round(totAdSp/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div></div>
     <div class="kpi" style="border-left:3px solid #7B2D8B"><div class="kpi-label">통합 B-ROAS</div><div class="kpi-val" style="color:#7B2D8B">${fmtRoas(totAdSp>0?totOnl/totAdSp:null)}</div><div class="kpi-sub c-neu">온라인매출 ÷ 광고지출</div></div>
+  </div>
+
+  <!-- 품목별 매출 비중 도넛 -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:16px 20px 0">
+    <div style="background:#fff;border-radius:12px;border:1px solid #E8DEB4;padding:16px;text-align:center">
+      <div style="font-size:12px;font-weight:700;color:#888;margin-bottom:8px">🛒 올리브영 품목별 매출 비중</div>
+      <div style="height:160px;position:relative"><canvas id="oyDonut"></canvas></div>
+    </div>
+    <div style="background:#fff;border-radius:12px;border:1px solid #E8DEB4;padding:16px;text-align:center">
+      <div style="font-size:12px;font-weight:700;color:#888;margin-bottom:8px">🏪 자사몰 품목별 매출 비중</div>
+      <div style="height:160px;position:relative"><canvas id="jsDonut"></canvas></div>
+    </div>
   </div>
 
   <div class="integrated-grid">
@@ -925,8 +952,29 @@ function buildProfitCalc(oyRows,jsRows){
 }
 
 function renderIntegratedCharts(){
-  const oyRows=getRows('oy','monthly').filter(r=>(r.total||0)>0);
-  const jsRows=getRows('js','monthly').filter(r=>(r.total||0)>0);
+  const intTab=curTab['integrated']||'monthly';
+  const oyRows=getRows('oy',intTab).filter(r=>(r.total||0)>0);
+  const jsRows=getRows('js',intTab).filter(r=>(r.total||0)>0);
+
+  // 도넛 차트 - 품목별 매출 비중
+  const PROD_KEYS=['masca','nose','milk','spx','matcha'];
+  const PROD_LABELS=['헤어마스카라','노세범','헤어밀크','슈퍼픽스','말차샴푸'];
+  const PROD_COLORS=['rgba(227,73,72,0.8)','rgba(99,153,34,0.8)','rgba(74,58,167,0.8)','rgba(235,104,52,0.8)','rgba(74,140,74,0.8)'];
+
+  ['oyDonut','jsDonut'].forEach((id,ci)=>{
+    const el=document.getElementById(id);if(!el)return;
+    if(charts[id]){try{charts[id].destroy();}catch(e){}}
+    const rows=ci===0?oyRows:jsRows;
+    const data=PROD_KEYS.map(k=>rows.reduce((t,r)=>t+(r[k]||0),0));
+    const total=data.reduce((a,b)=>a+b,0);
+    if(total===0)return;
+    charts[id]=new Chart(el,{type:'doughnut',data:{
+      labels:PROD_LABELS,
+      datasets:[{data,backgroundColor:PROD_COLORS,borderWidth:2,borderColor:'#fff'}]
+    },options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'right',labels:{font:{size:10},boxWidth:12}},
+        tooltip:{callbacks:{label:i=>`${i.label}: ${(i.raw/total*100).toFixed(1)}% (${Math.round(i.raw/1e4).toLocaleString()}만원)`}}}}});
+  });
 
   ['oyIntChart','jsIntChart'].forEach(id=>{
     const el=document.getElementById(id);
@@ -1097,7 +1145,7 @@ function buildChannelDash(ch){
   const ratioLabel=avgOnlineRatio!=null?`평균 ${fmtPct(avgOnlineRatio)}`:'';
 
   // 자사몰은 별도 구조
-  if(ch==='js') return buildJsDash(rows, valid, tab);
+  if(ch==='js') return buildJsDash(rows, valid, tabState);
 
   return `
   <!-- 기간 탭 -->
@@ -1311,6 +1359,13 @@ function getRows(ch,tab){
 }
 
 /* ── 이벤트 핸들러 ── */
+function switchIntTab(tab,el){
+  curTab['integrated']=tab;
+  document.querySelectorAll('.tabs .tab').forEach(t=>t.classList.remove('active'));
+  if(el)el.classList.add('active');
+  renderChannel('integrated');
+}
+
 function switchTab(ch,tab,el){
   curTab[ch]=tab;
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
