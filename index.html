@@ -309,26 +309,36 @@ async function fetchFromSheets(ch){
   const session = (await sb.auth.getSession()).data.session;
   const token = session?.access_token;
 
-  try {
-    // 채널별 시트 ID & 탭 이름 설정
-    // 통합 시트에서 채널별 탭 읽기
-    const UNIFIED_SHEET_ID = '1r9O-xRrkhbPbj3SlsEjIbM63r11DJHUDTK-lOFbO7xU';
-    const TAB_NAME = ch === 'oy' ? '올리브영' : '자사몰';
-
-    const salesRes = await fetch(EDGE_URL, {
+  const fetchSheet = async (spreadsheetId, sheetName) => {
+    const res = await fetch(EDGE_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
-      body: JSON.stringify({ spreadsheetId: UNIFIED_SHEET_ID, sheetName: TAB_NAME })
+      body: JSON.stringify({ spreadsheetId, sheetName })
     });
-    const salesData = await salesRes.json();
-    // 통합 시트 - 매출+광고 모두 한 탭에 포함
+    const data = await res.json();
+    if(data.error) throw new Error(`${sheetName}: ${data.error}`);
+    return data.values || [];
+  };
 
-    if(salesData.error){
-      throw new Error(salesData.error);
+  try {
+    let salesRows=[], paidRows=[];
+
+    if(ch==='oy'){
+      // 올리브영 원본 시트에서 직접 읽기
+      const OY_ID = '1cL2Y5W-O7PSs8CCcLo2xrl6RXB68a5nbJvjroi3uK4g';
+      const raw1 = await fetchSheet(OY_ID, '[전체] Daily');
+      const raw2 = await fetchSheet(OY_ID, '[국내] paid');
+      const parsed = parseOySheets(raw1, raw2);
+      salesRows = parsed.sales;
+      paidRows = parsed.paid;
+    } else {
+      // 자사몰 원본 시트에서 직접 읽기
+      const JS_ID = '1VYChlkN9fIggDrh8YuCj7sgML1aIsAcHUVLUFPnkEB0';
+      const raw = await fetchSheet(JS_ID, 'daily 매출 대시보드');
+      const parsed = parseJsSheet(raw);
+      salesRows = parsed.sales;
+      paidRows = parsed.paid;
     }
-
-    // 통합 시트 파싱
-    const {sales:salesRows, paid:paidRows} = parseUnifiedSheet(salesData.values||[], ch);
 
     DATA[ch].sales = salesRows;
     DATA[ch].paid = paidRows;
@@ -469,6 +479,138 @@ function updateStatusBadge(ch,key,count){
 }
 
 /* ── CSV 파싱 ── */
+// 올리브영 원본 시트 파서
+// raw1: [전체] Daily (A:AD), raw2: [국내] paid (A:BD)
+// 헤더 2행, 데이터 3행~
+function parseOySheets(raw1, raw2){
+  const g=(i,r)=>{const v=r?.[i];return v!=null&&v!==''?parseFloat(String(v).replace(/,|%/g,''))||0:0;};
+  const gDate=(r)=>{
+    const v=r?.[0];if(!v)return null;
+    const s=String(v).trim();
+    const m=s.match(/(\d{2,4})[.\-\/\s]+(\d{1,2})[.\-\/\s]+(\d{1,2})/);
+    if(m){let y=+m[1];if(y<100)y+=2000;return new Date(y,+m[2]-1,+m[3]);}
+    return null;
+  };
+
+  // raw1 매핑: [전체] Daily
+  // E=4:날짜, I=8:온라인주문기준, C=2:국내+글로벌출고(전체), D=3:국내출고
+  // H=7:말차, I=8:슈퍼픽스출고? -> 실제로 올영data A=날짜(RAW1-E), B=온라인(RAW1-I), C=국내+글로벌(RAW1-K), D=국내(RAW1-J)
+  // 아까 매핑 기준:
+  // A-RAW1-E(날짜), B-RAW1-I(온라인), D-RAW1-J(국내), E-RAW1-K, F-RAW1-L, G-RAW1-M
+  // H-RAW1-AD, I-RAW1-Z+AA, J-RAW1-Q+R+S+T, K-RAW1-U+AB+AC, L-RAW1-V+X+Y
+  // RAW1 0-based: E=4,I=8,J=9,K=10,L=11,M=12,Q=16,R=17,S=18,T=19,U=20,V=21,X=23,Y=24,Z=25,AA=26,AB=27,AC=28,AD=29
+
+  // raw2 매핑: [국내] paid
+  // O-RAW2-K(11), P-RAW2-L(12)
+  // V-RAW2-AF(31), W-RAW2-AD(29), X-RAW2-X(23), Y-RAW2-Z(25), Z-RAW2-AB(27)
+  // AA-RAW2-AG(32), AB-RAW2-AE(30), AC-RAW2-Y(24), AD-RAW2-AA(26), AE-RAW2-AC(28)
+  // AV-RAW2-AW(48), AW-RAW2-AU(46), AX-RAW2-AQ(42), AY-RAW2-AO(40), AZ-RAW2-AS(44)
+  // BF-RAW2-AX(49), BG-RAW2-AV(47), BH-RAW2-AP(41), BI-RAW2-AR(43), BJ-RAW2-AT(45)
+
+  // raw2는 헤더 2행, 데이터 3행~
+  // raw2 날짜 인덱스 확인 필요 - 보통 A=0
+
+  const sales=[], paid=[];
+  const startRow = 2; // 3행부터 (0-based index 2)
+
+  for(let i=startRow; i<raw1.length; i++){
+    const r1=raw1[i];
+    const dt=gDate(r1) || (r1[4] ? (() => {
+      const s=String(r1[4]).trim();
+      const m=s.match(/(\d{2,4})[.\-\/\s]+(\d{1,2})[.\-\/\s]+(\d{1,2})/);
+      if(m){let y=+m[1];if(y<100)y+=2000;return new Date(y,+m[2]-1,+m[3]);}
+      return null;
+    })() : null);
+
+    if(!dt||dt.getFullYear()<2024||dt.getFullYear()>2030)continue;
+    const total=g(10,r1)||g(2,r1), online=g(8,r1);
+    if(total===0&&online===0)continue;
+
+    sales.push({date:dt,
+      total:g(10,r1)||total, online,
+      matcha:g(7,r1), spx:g(8,r1), masca:g(9,r1), nose:g(10,r1), milk:g(11,r1),
+    });
+  }
+
+  // raw2로 paid 파싱
+  for(let i=startRow; i<raw2.length; i++){
+    const r2=raw2[i];
+    const dt = (() => {
+      const v=r2?.[0];if(!v)return null;
+      const s=String(v).trim();
+      const m=s.match(/(\d{2,4})[.\-\/\s]+(\d{1,2})[.\-\/\s]+(\d{1,2})/);
+      if(m){let y=+m[1];if(y<100)y+=2000;return new Date(y,+m[2]-1,+m[3]);}
+      return null;
+    })();
+    if(!dt||dt.getFullYear()<2024||dt.getFullYear()>2030)continue;
+    const adSpend=g(11,r2)+g(12,r2);
+    if(adSpend===0)continue;
+
+    paid.push({date:dt,
+      adSales:g(29,r2), metaSales:g(31,r2), cpcSales:g(32,r2),
+      adSpend, metaSpend:g(11,r2), cpcSpend:g(12,r2),
+      mascaSpend:g(59,r2), noseSpend:g(61,r2), milkSpend:g(62,r2), spxSpend:g(58,r2), lipSpend:0,
+      mascaMetaSpend:g(64,r2), mascaCpcSpend:g(69,r2),
+      noseMetaSpend:g(65,r2), noseCpcSpend:g(70,r2),
+      milkMetaSpend:g(66,r2), milkCpcSpend:g(71,r2),
+      spxMetaSpend:g(63,r2), spxCpcSpend:g(68,r2),
+      lipMetaSpend:0, lipCpcSpend:0,
+      mascaCV:g(35,r2), noseCV:g(36,r2), milkCV:g(37,r2), spxCV:g(34,r2), lipCV:0,
+      mascaMetaCV:g(49,r2), mascaCpcCV:g(39,r2),
+      noseMetaCV:g(50,r2), noseCpcCV:g(40,r2),
+      milkMetaCV:g(51,r2), milkCpcCV:g(41,r2),
+      spxMetaCV:g(48,r2), spxCpcCV:g(38,r2),
+      lipMetaCV:0, lipCpcCV:0,
+    });
+  }
+
+  return {sales, paid};
+}
+
+// 자사몰 원본 시트 파서
+// daily 매출 대시보드 탭, 헤더 2행, 데이터 3행~
+function parseJsSheet(raw){
+  const g=(i,r)=>{const v=r?.[i];return v!=null&&v!==''?parseFloat(String(v).replace(/,|%/g,''))||0:0;};
+  const sales=[], paid=[];
+
+  for(let i=2; i<raw.length; i++){
+    const r=raw[i];
+    const v=r?.[0];if(!v)continue;
+    const s=String(v).trim();
+    const m=s.match(/(\d{2,4})[.\-\/\s]+(\d{1,2})[.\-\/\s]+(\d{1,2})/);
+    if(!m)continue;
+    let y=+m[1];if(y<100)y+=2000;
+    const dt=new Date(y,+m[2]-1,+m[3]);
+    if(dt.getFullYear()<2024||dt.getFullYear()>2030)continue;
+
+    const total=g(4,r), online=g(6,r);
+    if(total===0&&online===0)continue;
+
+    sales.push({date:dt, total, online,
+      matcha:g(7,r), spx:g(8,r), masca:g(9,r), nose:g(10,r), milk:g(11,r),
+      visitors:g(1,r), purchases:g(2,r), cvRate:g(3,r),
+    });
+    const adSpend=g(13,r);
+    paid.push({date:dt,
+      adSales:g(22,r), metaSales:g(22,r), cpcSales:0,
+      adSpend, metaSpend:g(15,r), cpcSpend:g(14,r),
+      mascaSpend:g(18,r), noseSpend:g(19,r), milkSpend:g(20,r), spxSpend:g(17,r), matchaSpend:g(16,r), lipSpend:0,
+      mascaMetaSpend:g(18,r), mascaCpcSpend:0,
+      noseMetaSpend:g(19,r), noseCpcSpend:0,
+      milkMetaSpend:g(20,r), milkCpcSpend:0,
+      spxMetaSpend:g(17,r), spxCpcSpend:0,
+      lipMetaSpend:0, lipCpcSpend:0,
+      mascaCV:g(25,r), noseCV:g(26,r), milkCV:g(27,r), spxCV:g(24,r), matchaCV:g(23,r), lipCV:0,
+      mascaMetaCV:g(25,r), mascaCpcCV:0,
+      noseMetaCV:g(26,r), noseCpcCV:0,
+      milkMetaCV:g(27,r), milkCpcCV:0,
+      spxMetaCV:g(24,r), spxCpcCV:0,
+      lipMetaCV:0, lipCpcCV:0,
+    });
+  }
+  return {sales, paid};
+}
+
 function parseUnifiedSheet(values, ch){
   if(!values||values.length<4)return{sales:[],paid:[]};
 
@@ -1050,7 +1192,7 @@ function buildChannelDash(ch){
         <div class="chart-sub">META + CPC 매체 평균</div>
         ${pf('p22',curProd[ch].p22,PRODS)}
         <div class="legend">
-          ${lg('rgba(255,200,0,0.9)','광고 전환매출(원)')} ${lg('#C05E1A','통합 ROAS(%)','line')}
+          ${lg('rgba(255,200,0,0.9)','광고 전환매출(원)')} ${lg('#C05E1A','ROAS(%)','line')}
         </div>
         <div class="chart-wrap" style="height:200px"><canvas id="${ch}_c22"></canvas></div>
       </div>
@@ -1134,6 +1276,9 @@ function derived(rows){
     totalRoas:r.adSpend>0?r.adSales/r.adSpend:null,
     metaRoas:r.metaSpend>0?r.metaSales/r.metaSpend:null,
     cpcRoas:r.cpcSpend>0?r.cpcSales/r.cpcSpend:null,
+    matchaRoas:r.matchaSpend>0?(r.matchaCV||0)/r.matchaSpend:null,
+    matchaMetaRoas:r.matchaMetaSpend>0?(r.matchaMetaCV||0)/r.matchaMetaSpend:null,
+    matchaCpcRoas:r.matchaCpcSpend>0?(r.matchaCpcCV||0)/r.matchaCpcSpend:null,
     mascaRoas:r.mascaSpend>0?r.mascaCV/r.mascaSpend:null,
     mascaMetaRoas:r.mascaMetaSpend>0?r.mascaMetaCV/r.mascaMetaSpend:null,
     mascaCpcRoas:r.mascaCpcSpend>0?r.mascaCpcCV/r.mascaCpcSpend:null,
@@ -1409,7 +1554,7 @@ const PRODS_NO_ALL=[
   {k:'masca',l:'마스카라'},{k:'nose',l:'노세범'},{k:'milk',l:'헤어밀크'},{k:'spx',l:'슈퍼픽스'}
 ];
 const YELLOW='rgba(255,200,0,0.88)',YELLOWB='#B8860B';
-const shades=['rgba(255,200,0,0.9)','rgba(225,170,0,0.85)','rgba(195,140,0,0.8)','rgba(160,110,0,0.75)'];
+const shades=['rgba(255,200,0,0.9)','rgba(225,170,0,0.85)','rgba(195,140,0,0.8)','rgba(160,110,0,0.75)','rgba(130,85,0,0.7)'];
 
 function render21(ch,R,labels,avgRatio){
   const id=`${ch}_c21`;if(charts[id]){try{charts[id].destroy();}catch(e){}}
@@ -1487,10 +1632,10 @@ function render31(ch,R,labels){
   if(key==='all'){
     datasets=[
       {label:'전체 광고비',data:R.map(r=>Math.round((r.adSpend||0)/1e4)),backgroundColor:'rgba(44,44,44,0.85)',borderColor:'#2C2C2C',borderWidth:1,borderRadius:3,yAxisID:'y'},
-      {label:'통합 ROAS',data:R.map(r=>r.totalRoas!=null?Math.round(r.totalRoas*100):null),type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2.5,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
+      {label:'ROAS',data:R.map(r=>r.totalRoas!=null?Math.round(r.totalRoas*100):null),type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2.5,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
     ];
     roasDsIdx=1;roasColor='#C05E1A';
-    if(lgEl)lgEl.innerHTML=lgHtml('#2C2C2C','전체 광고비')+lgHtml('#C05E1A','통합 ROAS(%)',true);
+    if(lgEl)lgEl.innerHTML=lgHtml('#2C2C2C','전체 광고비')+lgHtml('#C05E1A','ROAS(%)',true);
   } else if(key==='meta'){
     datasets=[
       {label:'META 광고비',data:R.map(r=>Math.round((r.metaSpend||0)/1e4)),backgroundColor:'rgba(42,120,214,0.8)',borderColor:'#2a78d6',borderWidth:1,borderRadius:3,yAxisID:'y'},
@@ -1507,12 +1652,15 @@ function render31(ch,R,labels){
     if(lgEl)lgEl.innerHTML=lgHtml('rgba(100,190,240,0.8)','CPC 광고비')+lgHtml('#64BEF0','CPC ROAS(%)',true);
   }
 
+  const plugins31 = curChannel31==='all'
+    ? [llpFn(1,'#2a78d6'), llpFn(2,'#64BEF0')]
+    : [llpFn(roasDsIdx,roasColor)];
   charts[id]=new Chart(el,{type:'bar',data:{labels,datasets},options:{responsive:true,maintainAspectRatio:false,
     plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>i.yAxisID==='y2'?`${i.dataset.label}: ${i.raw}%`:`${i.dataset.label}: ${i.raw.toLocaleString()}만원`}}},
     scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
       y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
       y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}}},
-  plugins:[llpFn(roasDsIdx,roasColor)]});
+  plugins:plugins31});
 }
 
 function render32(ch,R,labels){
@@ -1530,7 +1678,7 @@ function render32(ch,R,labels){
   charts[id]=new Chart(el,{type:'bar',data:{labels,datasets:noData?[]:[
     {label:'META 광고비',data:mSpend(key),backgroundColor:'rgba(42,120,214,0.8)',borderColor:'#2a78d6',borderWidth:1,borderRadius:3,yAxisID:'y'},
     {label:'CPC 광고비',data:cSpend(key),backgroundColor:'rgba(100,190,240,0.8)',borderColor:'#64BEF0',borderWidth:1,borderRadius:3,yAxisID:'y'},
-    {label:'통합 ROAS',data:roas(key),type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2.5,pointRadius:4,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:'ROAS',data:roas(key),type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2.5,pointRadius:4,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
     {label:'META ROAS',data:mRoas(key),type:'line',borderColor:'#2a78d6',backgroundColor:'transparent',borderWidth:1.5,borderDash:[5,3],pointRadius:2,tension:0.3,spanGaps:true,yAxisID:'y2'},
     {label:'CPC ROAS',data:cRoas(key),type:'line',borderColor:'#64BEF0',backgroundColor:'transparent',borderWidth:1.5,borderDash:[5,3],pointRadius:2,tension:0.3,spanGaps:true,yAxisID:'y2'},
   ]},options:{responsive:true,maintainAspectRatio:false,
