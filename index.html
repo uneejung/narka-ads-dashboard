@@ -514,13 +514,8 @@ function parseUnifiedSheet(values, ch){
       });
     }
   } else {
-    // 자사몰 탭 파싱
-    // A=0날짜, E=4전체매출, G=6자사몰매출(online으로 사용)
-    // H=7말차, I=8슈퍼픽스, J=9헤어마스카라, K=10노세범, L=11헤어밀크
-    // N=13광고지출전체, O=14CRM, P=15META
-    // Q=16말차지출, R=17슈퍼픽스지출, S=18헤어마스카라지출, T=19노세범지출, U=20헤어밀크지출
-    // W=22광고전환전체, X=23말차전환, Y=24슈퍼픽스전환, Z=25헤어마스카라전환, AA=26노세범전환, AB=27헤어밀크전환
-    for(let i=3;i<values.length;i++){
+    // 자사몰 탭 파싱 - 3행부터 데이터 (index 2)
+    for(let i=2;i<values.length;i++){
       const r=values[i];
       const dt=gDate(r);
       if(!dt||dt.getFullYear()<2024||dt.getFullYear()>2030)continue;
@@ -848,6 +843,16 @@ function buildJsDash(rows, valid, tab){
       <div class="upload-item">
         <button class="upload-btn" style="background:#2D6A4F" onclick="fetchFromSheets('js')">🔄 Sheets에서 자동 불러오기</button>
         <div class="file-status st-wait" id="st_js_sheets">클릭하면 최신 데이터 자동 반영</div>
+      </div>
+      <div class="upload-item">
+        <button class="upload-btn" style="background:#444;font-size:11px;padding:6px 12px" onclick="document.getElementById('f_js_sales').click()">📊 매출 CSV</button>
+        <input type="file" id="f_js_sales" class="file-input" accept=".csv,.txt" onchange="handleUpload('js','sales',this.files[0])">
+        <div class="file-status st-wait" id="st_js_sales">대기 중</div>
+      </div>
+      <div class="upload-item">
+        <button class="upload-btn" style="background:#444;font-size:11px;padding:6px 12px" onclick="document.getElementById('f_js_paid').click()">💰 광고 CSV</button>
+        <input type="file" id="f_js_paid" class="file-input" accept=".csv,.txt" onchange="handleUpload('js','paid',this.files[0])">
+        <div class="file-status st-wait" id="st_js_paid">대기 중</div>
       </div>
     </div>
   </div>
