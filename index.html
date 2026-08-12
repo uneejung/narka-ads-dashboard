@@ -514,21 +514,24 @@ function parseOySheets(raw1, raw2){
   const sales=[], paid=[];
   const startRow = 2; // 3행부터 (0-based index 2)
 
-  for(let i=startRow; i<raw1.length; i++){
+  // [전체] Daily: 헤더 2행, 데이터 3행(index 2)~
+  // 날짜=A(0), 온라인주문=B(1), 국내+글로벌출고=C(2), 국내=D(3), 온라인출고=E(4), 오프라인=F(5), 글로벌=G(6)
+  // 말차=H(7), 슈퍼픽스=I(8), 마스카라=J(9), 노세범=K(10), 밀크=L(11)
+  for(let i=2; i<raw1.length; i++){
     const r1=raw1[i];
-    const dt=gDate(r1) || (r1[4] ? (() => {
+    // 날짜는 A열(0) 또는 E열(4) 중 날짜 형식인 것
+    let dt=gDate(r1);
+    if(!dt&&r1[4]){
       const s=String(r1[4]).trim();
       const m=s.match(/(\d{2,4})[.\-\/\s]+(\d{1,2})[.\-\/\s]+(\d{1,2})/);
-      if(m){let y=+m[1];if(y<100)y+=2000;return new Date(y,+m[2]-1,+m[3]);}
-      return null;
-    })() : null);
-
+      if(m){let y=+m[1];if(y<100)y+=2000;dt=new Date(y,+m[2]-1,+m[3]);}
+    }
     if(!dt||dt.getFullYear()<2024||dt.getFullYear()>2030)continue;
-    const total=g(10,r1)||g(2,r1), online=g(8,r1);
+    const total=g(2,r1), online=g(1,r1);
     if(total===0&&online===0)continue;
 
     sales.push({date:dt,
-      total:g(10,r1)||total, online,
+      total, online,
       matcha:g(7,r1), spx:g(8,r1), masca:g(9,r1), nose:g(10,r1), milk:g(11,r1),
     });
   }
@@ -821,8 +824,18 @@ function renderChannel(ch){
   Object.values(charts).forEach(c=>{try{c.destroy();}catch(e){}});
   charts={};
   const content=document.getElementById('channelContent');
-  if(ch==='integrated'){content.innerHTML=buildIntegrated();setTimeout(renderIntegratedCharts,60);}
-  else{content.innerHTML=buildChannelDash(ch);setTimeout(()=>renderChannelCharts(ch),60);}
+  if(ch==='integrated'){
+    content.innerHTML=buildIntegrated();
+    setTimeout(renderIntegratedCharts,60);
+  } else if(ch==='js'){
+    const rows=getRows('js',curTab['js']);
+    const valid=rows.filter(r=>(r.total||0)>0||(r.adSpend||0)>0);
+    content.innerHTML=buildJsDash(rows,valid,curTab['js']);
+    setTimeout(()=>renderChannelCharts('js'),60);
+  } else {
+    content.innerHTML=buildChannelDash(ch);
+    setTimeout(()=>renderChannelCharts(ch),60);
+  }
 }
 
 /* ── 통합 탭 ── */
@@ -1120,12 +1133,8 @@ function buildJsDash(rows, valid, tab){
 function buildChannelDash(ch){
   const chName=ch==='oy'?'올리브영':'자사몰';
   const tabState=curTab[ch];
-  const PRODS=ch==='oy'
-    ?[{k:'all',l:'전체'},{k:'masca',l:'마스카라'},{k:'nose',l:'노세범'},{k:'milk',l:'헤어밀크'},{k:'spx',l:'슈퍼픽스'}]
-    :[{k:'all',l:'전체'},{k:'masca',l:'마스카라'},{k:'nose',l:'노세범'},{k:'milk',l:'헤어밀크'},{k:'spx',l:'슈퍼픽스'},{k:'matcha',l:'말차샴푸'}];
-  const PRODS32=ch==='oy'
-    ?[{k:'all',l:'전체'},{k:'masca',l:'마스카라'},{k:'nose',l:'노세범'},{k:'milk',l:'헤어밀크'},{k:'spx',l:'슈퍼픽스'},{k:'matcha',l:'말차샴푸(7월 예정)'}]
-    :[{k:'all',l:'전체'},{k:'masca',l:'마스카라'},{k:'nose',l:'노세범'},{k:'milk',l:'헤어밀크'},{k:'spx',l:'슈퍼픽스'},{k:'matcha',l:'말차샴푸'}];
+  const PRODS=[{k:'all',l:'전체'},{k:'masca',l:'마스카라'},{k:'nose',l:'노세범'},{k:'milk',l:'헤어밀크'},{k:'spx',l:'슈퍼픽스'},{k:'matcha',l:'말차샴푸'}];
+  const PRODS32=[{k:'all',l:'전체'},{k:'masca',l:'마스카라'},{k:'nose',l:'노세범'},{k:'milk',l:'헤어밀크'},{k:'spx',l:'슈퍼픽스'},{k:'matcha',l:'말차샴푸'}];
 
   const rows=getRows(ch,tabState);
   const valid=rows.filter(r=>(r.total||0)>0||(r.adSpend||0)>0);
