@@ -441,7 +441,8 @@ function convertFromDB(type){
     const d={date:new Date(row.date)};
     if(type==='sales'){
       Object.assign(d,{total:row.total||0,online:row.online||0,masca:row.masca||0,
-        nose:row.nose||0,milk:row.milk||0,lip:row.lip||0,spx:row.spx||0,matcha:row.matcha||0});
+        nose:row.nose||0,milk:row.milk||0,lip:row.lip||0,spx:row.spx||0,matcha:row.matcha||0,
+        visitors:row.visitors||0,purchases:row.purchases||0,cvRate:row.cv_rate||0});
     } else {
       Object.assign(d,{
         adSales:row.ad_sales||0,metaSales:row.meta_sales||0,cpcSales:row.cpc_sales||0,
@@ -739,7 +740,8 @@ function parseSalesCSV(text,ch){
 function salesRowToDB(r){
   return {date:r.date.toISOString().slice(0,10),
     total:r.total,online:r.online,masca:r.masca,nose:r.nose,
-    milk:r.milk,lip:r.lip,spx:r.spx,matcha:r.matcha||0};
+    milk:r.milk,lip:r.lip||0,spx:r.spx,matcha:r.matcha||0,
+    visitors:r.visitors||0,purchases:r.purchases||0,cv_rate:r.cvRate||0};
 }
 
 function paidRowToDB(r){
@@ -1446,6 +1448,12 @@ function renderChannelCharts(ch){
   const R=rows.slice(-n);
   const labels=R.map(r=>curTab[ch]==='monthly'?r.key:r.key.slice(5));
   const avgRatio=avg(rows,'onlineRatio')??0;
+
+  // 자사몰은 완전히 별도 렌더링
+  if(ch==='js'){
+    renderJsCharts(ch,R,labels,avgRatio);
+    return;
+  }
 
   const mk=(id,cfg,plugins=[])=>{
     const el=document.getElementById(`${ch}_${id}`);if(!el)return;
