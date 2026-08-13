@@ -78,6 +78,7 @@ body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:#F8
 .kpi-label{font-size:10px;color:#aaa;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px}
 .kpi-val{font-size:20px;font-weight:700;color:#2C2C2C;line-height:1.1}
 .kpi-val.kpi-full{font-size:16px;letter-spacing:-0.3px;word-break:break-all}
+.basis-note{font-size:10px;color:#9a8f6a;background:#FBF7E6;border-left:3px solid #E8DEB4;padding:5px 8px;border-radius:3px;margin:4px 0 8px;line-height:1.45}
 .kpi-val.kpi-full small{font-size:11px;color:#aaa;font-weight:600;margin-left:2px}
 .kpi-sub{font-size:10px;margin-top:4px}
 .c-up{color:#2D6A4F}.c-dn{color:#8B1A1A}.c-neu{color:#888}
@@ -437,10 +438,13 @@ function showApp(){
 }
 
 /* ── Supabase 데이터 저장/로드 ── */
+// 파서 로직을 바꿀 때마다 올릴 것. 값이 다르면 옛 캐시를 버리고 시트를 다시 읽는다.
+const PARSER_VERSION = 10;
+
 function saveLocal(ch){
   try{
     localStorage.setItem('narka_'+ch, JSON.stringify({
-      sales:DATA[ch].sales, paid:DATA[ch].paid, ts:Date.now()
+      pv:PARSER_VERSION, sales:DATA[ch].sales, paid:DATA[ch].paid, ts:Date.now()
     }));
   }catch(e){console.warn('localStorage 저장 실패',e);}
 }
@@ -450,6 +454,11 @@ function loadLocal(ch){
     const raw=localStorage.getItem('narka_'+ch);
     if(!raw)return false;
     const o=JSON.parse(raw);
+    if(o.pv!==PARSER_VERSION){
+      localStorage.removeItem('narka_'+ch);
+      console.warn(`[${ch}] 파서 버전 변경(${o.pv||'없음'}→${PARSER_VERSION}) — 캐시 폐기. "Sheets에서 자동 불러오기"로 다시 읽어주세요.`);
+      return false;
+    }
     if(!o.sales||!o.sales.length)return false;
     DATA[ch].sales=o.sales.map(r=>({...r,date:new Date(r.date)}));
     DATA[ch].paid=(o.paid||[]).map(r=>({...r,date:new Date(r.date)}));
@@ -487,6 +496,17 @@ async function loadDataFromSupabase(){
     updateStatusBadge('js','paid',DATA.js.paid.length);
   }
   renderChannel(curChannel);
+
+  // 파서 버전이 올라가 캐시를 버린 경우 시트에서 자동으로 다시 읽는다
+  const need=[];
+  if(!okOy)need.push('oy');
+  if(!okJs)need.push('js');
+  if(need.length&&typeof fetchFromSheets==='function'){
+    for(const ch of need){
+      try{ await fetchFromSheets(ch); }
+      catch(e){ console.warn(`[${ch}] 시트 자동 재조회 실패 — 수동으로 "Sheets에서 자동 불러오기"를 눌러주세요.`, e); }
+    }
+  }
 }
 
 function convertFromDB(type){
@@ -567,9 +587,11 @@ function parseOySheets(raw1, raw2){
   const sales=[], paid=[];
   const startRow = 2; // 3행부터 (0-based index 2)
 
-  // [전체] Daily: 헤더 3행, 데이터 4행(index 3)~
-  // 날짜=E(4), 전체매출=J(9), 온라인매출=K(10)
-  // 품목별: 말차=?, 슈퍼픽스=?, 마스카라=?, 노세범=?, 밀크=?
+  // [전체] Daily — 2026.08 콘솔 실측 기준, 헤더 3행, 데이터 4행(index 3)~
+  // 4=E 날짜 / 6=G 프로모션 / 7=H TOTAL(국내+글로벌) / 8=I 온라인 주문금(주문 기준)
+  // 9=J 국내(출고) / 10=K 온라인(출고) / 11=L 오프라인 / 12=M 글로벌
+  // 13=N TOTAL ROAS / 14=O KR-ROAS / 15=P Global-ROAS / 16~29=Q~AD 품목별 매출
+  // 검산: 10+11=9, 9+12=7
   for(let i=3; i<raw1.length; i++){
     const r1=raw1[i];
     const v=r1?.[4]; if(!v)continue; // E열 = 날짜
@@ -580,7 +602,10 @@ function parseOySheets(raw1, raw2){
     const dt=new Date(y,+m[2]-1,+m[3]);
     if(dt.getFullYear()<2024||dt.getFullYear()>2030)continue;
 
-    const total=g(9,r1), online=g(10,r1);
+    // 전체 매출 = J열(9) 국내 출고 기준 / 온라인 매출 = I열(8) 온라인 당일 주문금 기준
+    // 광고비·광고전환매출이 당일 집행·당일 주문 기준이므로 ROAS 분모·분자 시점을 맞추기 위해 주문금을 사용.
+    // K열(10)은 출고 기준이라 미출고분이 익일로 밀려 당일 ROAS가 왜곡되고, 2025-07~10 구간은 미입력.
+    const total=g(9,r1), online=g(8,r1);
     if(total===0&&online===0)continue;
 
     sales.push({date:dt,
@@ -1320,7 +1345,7 @@ function buildChannelDash(ch){
   <!-- KPI -->
   <div class="kpi-row">
     <div class="kpi"><div class="kpi-label">전체 매출</div><div class="kpi-val kpi-full">${fmt(Math.round(tot))}<small>원</small></div><div class="kpi-sub c-neu">온라인 비중 ${fmtPct(onlR)}</div></div>
-    <div class="kpi"><div class="kpi-label">온라인 매출</div><div class="kpi-val kpi-full">${fmt(Math.round(onl))}<small>원</small></div><div class="kpi-sub ${adDep&&adDep>.5?'c-dn':'c-up'}">광고 의존도 ${fmtPct(adDep)}</div></div>
+    <div class="kpi"><div class="kpi-label">온라인 매출 <small style="font-weight:400;color:#bbb">주문금 기준</small></div><div class="kpi-val kpi-full">${fmt(Math.round(onl))}<small>원</small></div><div class="kpi-sub ${adDep&&adDep>.5?'c-dn':'c-up'}">광고 의존도 ${fmtPct(adDep)}</div></div>
     <div class="kpi"><div class="kpi-label">광고 지출</div><div class="kpi-val kpi-full">${fmt(Math.round(adSp))}<small>원</small></div><div class="kpi-sub c-neu">지출/온라인 ${fmtPct(adRate)}</div></div>
     <div class="kpi" style="border-left:3px solid #7B2D8B"><div class="kpi-label">B-ROAS</div><div class="kpi-val" style="color:#7B2D8B">${fmtRoas(broas)}</div><div class="kpi-sub c-neu">온라인매출 ÷ 광고지출</div></div>
     <div class="kpi"><div class="kpi-label">매체 ROAS</div><div class="kpi-val ${roas>=5?'c-up':roas>=3?'c-neu':'c-dn'}">${fmtRoas(roas)}</div><div class="kpi-sub c-neu">META ${fmtRoas(metaRoas)} / CPC ${fmtRoas(cpcRoas)}</div></div>
@@ -1333,6 +1358,7 @@ function buildChannelDash(ch){
       <div class="chart-card">
         <h4>1-1 · 온라인 매출 비중 (매출액:원 / 비중:%)</h4>
         <div class="chart-sub">전체 매출 증감 원인 파악</div>
+        <div class="basis-note">* 온라인 매출 = <b>당일 주문금</b> 기준(I열) · 전체 매출 = <b>출고</b> 기준(J열). 광고비·전환매출과 시점을 맞추기 위해 주문금 사용. 기준이 달라 온라인 비중은 실제보다 다소 높게 표시됨</div>
         <div class="legend">
           ${lg('#999','전체 매출')} ${lg('#2C2C2C','온라인 매출')}
           ${lg('#B8860B','온라인 비중(%)','line')}
@@ -1342,8 +1368,9 @@ function buildChannelDash(ch){
         <div class="chart-wrap-tall"><canvas id="${ch}_c11"></canvas></div>
       </div>
       <div class="chart-card">
-        <h4>1-2 · Blended ROAS (%) <small style="font-weight:400;color:#aaa">기준: 온라인 매출</small></h4>
-        <div class="chart-sub">기존 BROAS 기준 변경: 통합 → 온라인 매출</div>
+        <h4>1-2 · Blended ROAS (%) <small style="font-weight:400;color:#aaa">기준: 온라인 주문금</small></h4>
+        <div class="chart-sub">B-ROAS = 온라인 당일 주문금 ÷ 광고지출</div>
+        <div class="basis-note">* 온라인 매출 = <b>당일 주문금</b> 기준(I열) · 전체 매출 = <b>출고</b> 기준(J열). 광고비·전환매출과 시점을 맞추기 위해 주문금 사용. 기준이 달라 온라인 비중은 실제보다 다소 높게 표시됨</div>
         <div class="legend">
           ${lg('#2C2C2C','광고 전환매출')} ${lg('#C05E1A','B-ROAS (%)','line')}
         </div>
@@ -1751,7 +1778,7 @@ function render21(ch,R,labels,avgRatio){
 
   if(key==='all'){
     charts[id]=newChart(el,{type:'bar',data:{labels,datasets:[
-      {label:'전체 온라인 매출',data:R.map(r=>Math.round((r.online||0)/1e4)),
+      {label:'추정 온라인 매출',data:R.map(r=>{const t=r.total??0;return t>0?Math.round(t*avgRatio/1e4):null;}),
         backgroundColor:YELLOW,borderColor:YELLOWB,borderWidth:1,borderRadius:3},
     ]},options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
@@ -1770,31 +1797,16 @@ function render22(ch,R,labels,avgRatio){
   const id=`${ch}_c22`;if(charts[id]){try{charts[id].destroy();}catch(e){}}
   const el=document.getElementById(id);if(!el)return;
   const key=curProd[ch].p22;
-  const roasColors=['#C05E1A','#2a78d6','#7B2D8B','#1baf7a'];
-
-  if(key==='all'){
-    const barDs=PRODS_NO_ALL.map((p,i)=>({
-      label:p.l+' 전환매출',data:R.map(r=>Math.round((r[p.k+'CV']||0)/1e4)),
-      backgroundColor:shades[i%shades.length],borderColor:YELLOWB,borderWidth:1,borderRadius:2,yAxisID:'y',
-    }));
-    const lineDs=PRODS_NO_ALL.map((p,i)=>({
-      label:p.l+' ROAS',data:R.map(r=>r[p.k+'Roas']!=null?Math.round(r[p.k+'Roas']*100):null),
-      type:'line',borderColor:roasColors[i%roasColors.length],backgroundColor:'transparent',
-      borderWidth:1.5,pointRadius:2,tension:0.3,spanGaps:true,yAxisID:'y2',
-    }));
-    charts[id]=newChart(el,{type:'bar',data:{labels,datasets:[...barDs,...lineDs]},options:{
-      responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>i.yAxisID==='y2'?`${i.dataset.label}: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
-      scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
-        y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
-        y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}}}});
-    return;
-  }
-  const cvData=R.map(r=>Math.round((r[key+'CV']||0)/1e4));
-  const roasData=R.map(r=>r[key+'Roas']!=null?Math.round(r[key+'Roas']*100):null);
+  // 전체 = 합산 전환매출 1개 막대 + 전체 ROAS 1개 선 (품목 분할 안 함)
+  const cvData=key==='all'
+    ? R.map(r=>Math.round((r.adSales||0)/1e4))
+    : R.map(r=>Math.round((r[key+'CV']||0)/1e4));
+  const roasData=key==='all'
+    ? R.map(r=>r.totalRoas!=null?Math.round(r.totalRoas*100):null)
+    : R.map(r=>r[key+'Roas']!=null?Math.round(r[key+'Roas']*100):null);
   charts[id]=newChart(el,{type:'bar',data:{labels,datasets:[
-    {label:key+' 전환매출',data:cvData,backgroundColor:YELLOW,borderColor:YELLOWB,borderWidth:1,borderRadius:3,yAxisID:'y'},
-    {label:key+' ROAS',data:roasData,type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:(key==='all'?'전체':key)+' 전환매출',data:cvData,backgroundColor:YELLOW,borderColor:YELLOWB,borderWidth:1,borderRadius:3,yAxisID:'y'},
+    {label:(key==='all'?'전체':key)+' ROAS',data:roasData,type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
   ]},options:{responsive:true,maintainAspectRatio:false,
     plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>i.datasetIndex===1?`ROAS: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
     scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
