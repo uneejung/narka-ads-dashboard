@@ -240,8 +240,8 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 
 let curChannel = 'integrated';
 let curTab = {oy:'monthly', js:'monthly', integrated:'monthly'};
-let drStart = {oy:null, js:null};
-let drEnd = {oy:null, js:null};
+let drStart = {oy:null, js:null, integrated:null};
+let drEnd = {oy:null, js:null, integrated:null};
 let curProd = {oy:{p21:'all',p22:'all',p32:'all',ch31:'all'}, js:{p21:'all',p22:'all',p32:'all',ch31:'all'}};
 
 // BEP ROAS 기준선 (원가율 시트 기준)
@@ -259,10 +259,16 @@ const BEP = {
   js: 157,     // 자사몰 단품 평균 BEP ROAS %
 };
 
+// 품목별 BEP ROAS(%) — 값 입력 전까지는 채널 평균(BEP.js / BEP.oy) 사용
+const BEP_PROD = {
+  js: { all:null, masca:null, nose:null, milk:null, spx:null, matcha:null },
+  oy: { all:null, masca:null, nose:null, milk:null, spx:null, matcha:null },
+};
+
 // 수익성 고정값
 const COST_RATES = {
-  oy: { shipout: 0.39, logistics: 0.02, channel: 0.229, vat: 1.1 },
-  js: { pg: 0.033, logistics3pl: 0.09, vat: 1.1 },
+  oy: { shipout: 0.39, logistics: 0.02, channel: 0.229, cogs: 0.242, vat: 1.1 },
+  js: { pg: 0.033, logistics3pl: 0.09, cogs: 0.162, vat: 1.1 },
 };
 let charts = {};
 let dbLog = [];
@@ -349,6 +355,7 @@ async function fetchFromSheets(ch){
       const OY_ID = '1cL2Y5W-O7PSs8CCcLo2xrl6RXB68a5nbJvjroi3uK4g';
       const raw1 = await fetchSheet(OY_ID, '[전체] Daily');
       const raw2 = await fetchSheet(OY_ID, '[국내] paid');
+      window.RAW = {...(window.RAW||{}), oyDaily: raw1, oyPaid: raw2};
       const parsed = parseOySheets(raw1, raw2);
       salesRows = parsed.sales;
       paidRows = parsed.paid;
@@ -356,6 +363,7 @@ async function fetchFromSheets(ch){
       // 자사몰 원본 시트에서 직접 읽기
       const JS_ID = '1VYChlkN9fIggDrh8YuCj7sgML1aIsAcHUVLUFPnkEB0';
       const raw = await fetchSheet(JS_ID, 'daily 매출 대시보드');
+      window.RAW = {...(window.RAW||{}), js: raw};
       const parsed = parseJsSheet(raw);
       salesRows = parsed.sales;
       paidRows = parsed.paid;
@@ -894,10 +902,11 @@ function renderChannel(ch){
 /* ── 통합 탭 ── */
 function buildIntegrated(){
   const intTab=curTab['integrated']||'monthly';
-  const oyRows=getRows('oy',intTab);
-  const jsRows=getRows('js',intTab);
+  const oyRows=getRows('oy',intTab,'integrated');
+  const jsRows=getRows('js',intTab,'integrated');
   const oyValid=oyRows.filter(r=>(r.total||0)>0);
   const jsValid=jsRows.filter(r=>(r.total||0)>0);
+  const dv=d=>d?new Date(d.getTime()-d.getTimezoneOffset()*6e4).toISOString().slice(0,10):'';
 
   const S=(rows,f)=>rows.reduce((t,r)=>t+(r[f]||0),0);
   const oyTot=S(oyValid,'total'),oyOnl=S(oyValid,'online'),oyAdSp=S(oyValid,'adSpend'),oyAdCv=S(oyValid,'adSales');
@@ -930,6 +939,16 @@ function buildIntegrated(){
     <div class="tab ${intTab==='daily'?'active':''}" onclick="switchIntTab('daily',this)">📅 Daily</div>
     <div class="tab ${intTab==='weekly'?'active':''}" onclick="switchIntTab('weekly',this)">📆 Weekly</div>
     <div class="tab ${intTab==='monthly'?'active':''}" onclick="switchIntTab('monthly',this)">📊 Monthly</div>
+  </div>
+
+  <!-- 통합탭 기간 설정 -->
+  <div class="date-range-bar">
+    <span class="dr-label">기간</span>
+    <input type="date" id="dr_integrated_start" class="dr-input" value="${dv(drStart['integrated'])}" onchange="setDR('integrated')">
+    <span class="dr-sep">~</span>
+    <input type="date" id="dr_integrated_end" class="dr-input" value="${dv(drEnd['integrated'])}" onchange="setDR('integrated')">
+    <button class="dr-reset" onclick="resetDR('integrated')">전체 기간</button>
+    <span class="dr-info" id="dr_integrated_info">${(drStart['integrated']||drEnd['integrated'])?'선택 구간 적용 중':''}</span>
   </div>
 
   <div class="kpi-row" style="padding:16px 20px 0">
@@ -979,50 +998,71 @@ function buildProfitCalc(oyRows,jsRows){
   const oyRev=S(oyRows,'total'), jsRev=S(jsRows,'total');
   const oyAdSp=S(oyRows,'adSpend'), jsAdSp=S(jsRows,'adSpend');
 
+  const O=COST_RATES.oy, J=COST_RATES.js;
+  // 올리브영: 채널수수료 + 원가 + 물류비 + 광고비
+  const oyFee=Math.round(oyRev*O.channel);
+  const oyCogs=Math.round(oyRev*O.cogs);
+  const oyLog=Math.round(oyRev*O.logistics);
+  const oyLeft=oyRev-oyFee-oyCogs-oyLog-oyAdSp;
+  // 자사몰: PG수수료 + 원가 + 물류대행 + 광고비
+  const jsPg=Math.round(jsRev*J.pg);
+  const jsCogs=Math.round(jsRev*J.cogs);
+  const jsLog=Math.round(jsRev*J.logistics3pl);
+  const jsLeft=jsRev-jsPg-jsCogs-jsLog-jsAdSp;
+
+  const totRev=oyRev+jsRev, totAd=oyAdSp+jsAdSp;
+  const totFee=oyFee+jsPg, totCogs=oyCogs+jsCogs, totLog=oyLog+jsLog;
+  const totLeft=oyLeft+jsLeft;
+  const pct=(v,base)=>base>0?` <span style="font-size:10px;color:#bbb">(${(v/base*100).toFixed(1)}%)</span>`:'';
+
   return `
   <div class="profit-grid">
     <div class="profit-card">
       <h4>🛒 올리브영</h4>
       <div class="profit-row"><span class="profit-label">총 매출</span><span class="profit-val">${fmt(oyRev)}원</span></div>
-      <div class="profit-row"><span class="profit-label">올리브영 수수료 (30%)</span><span class="profit-val c-dn">-${fmt(Math.round(oyRev*0.3))}원</span></div>
-      <div class="profit-row"><span class="profit-label">광고비</span><span class="profit-val c-dn">-${fmt(oyAdSp)}원</span></div>
-      <div class="profit-row"><span class="profit-label">원가 (미입력)</span><span class="profit-val" style="color:#aaa">-</span></div>
-      <div class="profit-row"><span class="profit-label">물류비 (미입력)</span><span class="profit-val" style="color:#aaa">-</span></div>
+      <div class="profit-row"><span class="profit-label">올리브영 채널 수수료 (${(O.channel*100).toFixed(1)}%)</span><span class="profit-val c-dn">-${fmt(oyFee)}원</span></div>
+      <div class="profit-row"><span class="profit-label">원가 (${(O.cogs*100).toFixed(1)}%)</span><span class="profit-val c-dn">-${fmt(oyCogs)}원</span></div>
+      <div class="profit-row"><span class="profit-label">물류비 (${(O.logistics*100).toFixed(1)}%)</span><span class="profit-val c-dn">-${fmt(oyLog)}원</span></div>
+      <div class="profit-row"><span class="profit-label">광고비${pct(oyAdSp,oyRev)}</span><span class="profit-val c-dn">-${fmt(oyAdSp)}원</span></div>
       <div class="profit-total">
-        <span class="profit-total-label">광고비 차감 후</span>
-        <span class="profit-total-val">${fmt(Math.round(oyRev*0.7-oyAdSp))}원</span>
+        <span class="profit-total-label">차감 후 잔여</span>
+        <span class="profit-total-val">${fmt(oyLeft)}원</span>
       </div>
+      <p style="font-size:10px;color:#aaa;margin-top:6px">잔여율 ${oyRev>0?(oyLeft/oyRev*100).toFixed(1):'-'}%</p>
     </div>
     <div class="profit-card">
       <h4>🏪 자사몰</h4>
       <div class="profit-row"><span class="profit-label">총 매출</span><span class="profit-val">${fmt(jsRev)}원</span></div>
-      <div class="profit-row"><span class="profit-label">PG 수수료 (미입력)</span><span class="profit-val" style="color:#aaa">-</span></div>
-      <div class="profit-row"><span class="profit-label">광고비</span><span class="profit-val c-dn">-${fmt(jsAdSp)}원</span></div>
-      <div class="profit-row"><span class="profit-label">원가 (미입력)</span><span class="profit-val" style="color:#aaa">-</span></div>
-      <div class="profit-row"><span class="profit-label">물류비 (미입력)</span><span class="profit-val" style="color:#aaa">-</span></div>
+      <div class="profit-row"><span class="profit-label">PG 수수료 (${(J.pg*100).toFixed(1)}%)</span><span class="profit-val c-dn">-${fmt(jsPg)}원</span></div>
+      <div class="profit-row"><span class="profit-label">원가 (${(J.cogs*100).toFixed(1)}%)</span><span class="profit-val c-dn">-${fmt(jsCogs)}원</span></div>
+      <div class="profit-row"><span class="profit-label">물류대행비 (${(J.logistics3pl*100).toFixed(1)}%)</span><span class="profit-val c-dn">-${fmt(jsLog)}원</span></div>
+      <div class="profit-row"><span class="profit-label">광고비${pct(jsAdSp,jsRev)}</span><span class="profit-val c-dn">-${fmt(jsAdSp)}원</span></div>
       <div class="profit-total">
-        <span class="profit-total-label">광고비 차감 후</span>
-        <span class="profit-total-val">${fmt(jsRev-jsAdSp)}원</span>
+        <span class="profit-total-label">차감 후 잔여</span>
+        <span class="profit-total-val">${fmt(jsLeft)}원</span>
       </div>
+      <p style="font-size:10px;color:#aaa;margin-top:6px">잔여율 ${jsRev>0?(jsLeft/jsRev*100).toFixed(1):'-'}%</p>
     </div>
     <div class="profit-card">
       <h4>📊 통합</h4>
-      <div class="profit-row"><span class="profit-label">통합 총 매출</span><span class="profit-val">${fmt(oyRev+jsRev)}원</span></div>
-      <div class="profit-row"><span class="profit-label">통합 광고비</span><span class="profit-val c-dn">-${fmt(oyAdSp+jsAdSp)}원</span></div>
-      <div class="profit-row"><span class="profit-label">OY 수수료 (30%)</span><span class="profit-val c-dn">-${fmt(Math.round(oyRev*0.3))}원</span></div>
+      <div class="profit-row"><span class="profit-label">통합 총 매출</span><span class="profit-val">${fmt(totRev)}원</span></div>
+      <div class="profit-row"><span class="profit-label">채널·PG 수수료</span><span class="profit-val c-dn">-${fmt(totFee)}원</span></div>
+      <div class="profit-row"><span class="profit-label">원가</span><span class="profit-val c-dn">-${fmt(totCogs)}원</span></div>
+      <div class="profit-row"><span class="profit-label">물류비</span><span class="profit-val c-dn">-${fmt(totLog)}원</span></div>
+      <div class="profit-row"><span class="profit-label">광고비${pct(totAd,totRev)}</span><span class="profit-val c-dn">-${fmt(totAd)}원</span></div>
       <div class="profit-total">
-        <span class="profit-total-label">합산 광고+수수료 차감</span>
-        <span class="profit-total-val">${fmt(Math.round((oyRev+jsRev)*1-oyRev*0.3-(oyAdSp+jsAdSp)))}원</span>
+        <span class="profit-total-label">차감 후 잔여</span>
+        <span class="profit-total-val">${fmt(totLeft)}원</span>
       </div>
-      <p style="font-size:10px;color:#aaa;margin-top:8px">* 원가·물류비 미입력 상태. 품목별 원가 추가 시 정확도 향상</p>
+      <p style="font-size:10px;color:#aaa;margin-top:8px">* 원가율 OY ${(O.cogs*100).toFixed(1)}% / 자사몰 ${(J.cogs*100).toFixed(1)}% 고정 적용. VAT 미반영, 인건비·기타 고정비 제외</p>
     </div>
   </div>`;
 }
 
 function renderIntegratedCharts(){
   const intTab=curTab['integrated']||'monthly';
-  const oyRows=getRows('oy',intTab).filter(r=>(r.total||0)>0);
-  const jsRows=getRows('js',intTab).filter(r=>(r.total||0)>0);
+  const oyRows=getRows('oy',intTab,'integrated').filter(r=>(r.total||0)>0);
+  const jsRows=getRows('js',intTab,'integrated').filter(r=>(r.total||0)>0);
 
   // 도넛 차트 - 품목별 매출 비중
   const PROD_KEYS=['masca','nose','milk','spx','matcha'];
@@ -1143,11 +1183,11 @@ function buildJsDash(rows, valid, tab){
     <div class="sec-title"><b></b>매출 현황 <span class="sec-label">1-1 · 1-2</span></div>
     <div class="chart-grid-2">
       <div class="chart-card">
-        <h4>1-1 · 전체 매출 추이</h4>
-        <div class="chart-sub">전체매출 추이 (META 광고비 포함)</div>
+        <h4>1-1 · 자사몰 매출 추이</h4>
+        <div class="chart-sub">매출 추이 + ROAS 2종 (점선)</div>
         <div class="legend">
-          ${lg('rgba(160,160,160,0.5)','전체 매출')} ${lg('rgba(44,44,44,0.85)','자사몰 매출')}
-          ${lg('#B8860B','BROAS(%)','line',true)}
+          ${lg('rgba(44,44,44,0.85)','자사몰 매출')}
+          ${lg('#7B2D8B','B-ROAS(%)','line',true)} ${lg('#2a78d6','META ROAS(%)','line',true)}
         </div>
         <div class="chart-wrap-tall"><canvas id="js_c11"></canvas></div>
       </div>
@@ -1156,7 +1196,7 @@ function buildJsDash(rows, valid, tab){
         <div class="chart-sub">광고 전환매출 추이 + BROAS</div>
         <div class="legend">
           ${lg('#2C2C2C','광고 전환매출')} ${lg('#C05E1A','B-ROAS(%)','line')}
-          ${lg('#7B2D8B','BEP ${BEP.js}% 기준','line',true)}
+          ${lg('#7B2D8B','BEP 기준','line',true)}
         </div>
         <div class="chart-wrap-tall"><canvas id="js_c12"></canvas></div>
       </div>
@@ -1174,11 +1214,11 @@ function buildJsDash(rows, valid, tab){
       </div>
       <div class="chart-card">
         <h4>2-2 · 품목별 ROAS (%) <small style="font-weight:400;color:#aaa">META 기준</small></h4>
-        <div class="chart-sub">광고 전환매출 ÷ 광고지출 + BEP 기준선</div>
+        <div class="chart-sub">광고 ROAS · B-ROAS + BEP 기준선(B-ROAS 기준)</div>
         ${pf('p22',curProd['js'].p22,JS_PRODS)}
         <div class="legend">
-          ${lg('rgba(255,200,0,0.9)','광고 전환매출(원)')} ${lg('#C05E1A','ROAS(%)','line')}
-          ${lg('#8B1A1A','BEP ${BEP.js}% 기준','line',true)}
+          ${lg('rgba(255,200,0,0.9)','광고 전환매출(원)')} ${lg('#C05E1A','광고 ROAS(%)','line')}
+          ${lg('#7B2D8B','B-ROAS(%)','line')} ${lg('#8B1A1A','BEP 기준','line',true)}
         </div>
         <div class="chart-wrap"><canvas id="js_c22"></canvas></div>
       </div>
@@ -1335,7 +1375,7 @@ function buildChannelDash(ch){
         ${pf('p32',curProd[ch].p32,PRODS32)}
         <div class="legend">
           ${lg('rgba(42,120,214,0.8)','META 광고비')} ${lg('rgba(100,190,240,0.8)','CPC 광고비')}
-          ${lg('#C05E1A','통합 ROAS(실선)','line')}
+          ${lg('#C05E1A','ROAS(실선)','line')}
           ${lg('#2a78d6','META ROAS(점선)','line',true)}
           ${lg('#64BEF0','CPC ROAS(점선)','line',true)}
         </div>
@@ -1359,22 +1399,28 @@ function groupBy(rows,keyFn){
   rows.forEach(r=>{const k=keyFn(new Date(r.date));(m[k]=m[k]||[]).push(r);});
   return Object.entries(m).map(([key,arr])=>{
     const s=f=>arr.reduce((t,r)=>t+(r[f]||0),0);
+    const vis=s('visitors'), pur=s('purchases');
     return {key,date:arr[0].date,
       total:s('total'),online:s('online'),masca:s('masca'),nose:s('nose'),milk:s('milk'),
       lip:s('lip'),spx:s('spx'),matcha:s('matcha'),
+      visitors:vis,purchases:pur,
+      cvRate:vis>0?Math.round(pur/vis*1000)/10:0,
       adSales:s('adSales'),metaSales:s('metaSales'),cpcSales:s('cpcSales'),
       adSpend:s('adSpend'),metaSpend:s('metaSpend'),cpcSpend:s('cpcSpend'),
       mascaSpend:s('mascaSpend'),noseSpend:s('noseSpend'),milkSpend:s('milkSpend'),
-      spxSpend:s('spxSpend'),lipSpend:s('lipSpend'),
+      spxSpend:s('spxSpend'),lipSpend:s('lipSpend'),matchaSpend:s('matchaSpend'),
       mascaMetaSpend:s('mascaMetaSpend'),mascaCpcSpend:s('mascaCpcSpend'),
       noseMetaSpend:s('noseMetaSpend'),noseCpcSpend:s('noseCpcSpend'),
       milkMetaSpend:s('milkMetaSpend'),milkCpcSpend:s('milkCpcSpend'),
       spxMetaSpend:s('spxMetaSpend'),spxCpcSpend:s('spxCpcSpend'),
+      matchaMetaSpend:s('matchaMetaSpend'),matchaCpcSpend:s('matchaCpcSpend'),
       mascaCV:s('mascaCV'),noseCV:s('noseCV'),milkCV:s('milkCV'),spxCV:s('spxCV'),lipCV:s('lipCV'),
+      matchaCV:s('matchaCV'),
       mascaMetaCV:s('mascaMetaCV'),mascaCpcCV:s('mascaCpcCV'),
       noseMetaCV:s('noseMetaCV'),noseCpcCV:s('noseCpcCV'),
       milkMetaCV:s('milkMetaCV'),milkCpcCV:s('milkCpcCV'),
       spxMetaCV:s('spxMetaCV'),spxCpcCV:s('spxCpcCV'),
+      matchaMetaCV:s('matchaMetaCV'),matchaCpcCV:s('matchaCpcCV'),
     };
   });
 }
@@ -1384,10 +1430,10 @@ const monthKey=d=>{const t=new Date(d);return `${t.getFullYear()}-${String(t.get
 
 function derived(rows){
   return rows.map(r=>({...r,
-    onlineRatio:r.total>0?r.online/r.total:null,
+    onlineRatio:r.total>0&&r.online>0?r.online/r.total:null,
     adDep:r.online>0?r.adSales/r.online:null,
     adRate:r.online>0?r.adSpend/r.online:null,
-    bRoas:r.adSpend>0?r.online/r.adSpend:null,
+    bRoas:r.adSpend>0&&r.online>0?r.online/r.adSpend:null,
     totalRoas:r.adSpend>0?r.adSales/r.adSpend:null,
     metaRoas:r.metaSpend>0?r.metaSales/r.metaSpend:null,
     cpcRoas:r.cpcSpend>0?r.cpcSales/r.cpcSpend:null,
@@ -1409,9 +1455,10 @@ function derived(rows){
   }));
 }
 
-function getRows(ch,tab){
+function getRows(ch,tab,rangeKey){
   let all=merge(ch);
-  const ds=drStart[ch], de=drEnd[ch];
+  const rk=rangeKey||ch;
+  const ds=drStart[rk], de=drEnd[rk];
   if(ds||de){
     all=all.filter(r=>{
       const t=new Date(r.date).getTime();
@@ -1447,7 +1494,7 @@ function setDR(ch){
   drEnd[ch]=e?new Date(e+'T23:59:59'):null;
   const info=document.getElementById(`dr_${ch}_info`);
   if(info)info.textContent=(drStart[ch]||drEnd[ch])?'선택 구간 적용 중':'';
-  renderChannelCharts(ch);
+  if(ch==='integrated')renderChannel('integrated'); else renderChannelCharts(ch);
 }
 
 function resetDR(ch){
@@ -1457,7 +1504,7 @@ function resetDR(ch){
   if(s)s.value='';if(e)e.value='';
   const info=document.getElementById(`dr_${ch}_info`);
   if(info)info.textContent='';
-  renderChannelCharts(ch);
+  if(ch==='integrated')renderChannel('integrated'); else renderChannelCharts(ch);
 }
 
 function setProd(ch,group,key,el){
@@ -1469,6 +1516,7 @@ function setProd(ch,group,key,el){
   const R=rows.slice(-n);
   const labels=R.map(r=>curTab[ch]==='monthly'?r.key:r.key.slice(5));
   const avgRatio=avg(rows,'onlineRatio')??0;
+  if(ch==='js'){renderJsCharts(ch,R,labels,avgRatio);return;}
   if(group==='p21')render21(ch,R,labels,avgRatio);
   if(group==='p22')render22(ch,R,labels,avgRatio);
   if(group==='p32')render32(ch,R,labels);
@@ -1530,8 +1578,8 @@ function renderChannelCharts(ch){
     {label:'전체 매출',data:R.map(r=>Math.round((r.total||0)/1e4)),backgroundColor:'rgba(160,160,160,0.5)',borderColor:'#999',borderWidth:1,borderRadius:3,yAxisID:'y'},
     {label:'온라인 매출',data:R.map(r=>Math.round((r.online||0)/1e4)),backgroundColor:'rgba(44,44,44,0.85)',borderColor:'#2C2C2C',borderWidth:1,borderRadius:3,yAxisID:'y'},
     {label:'온라인 비중',data:R.map(r=>r.onlineRatio!=null?Math.round(r.onlineRatio*1000)/10:null),type:'line',borderColor:'#B8860B',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#B8860B',tension:0.3,spanGaps:true,yAxisID:'y2'},
-    {label:'B-ROAS(전체)',data:R.map(r=>r.total>0?Math.round(r.adSpend/r.total*100):null),type:'line',borderColor:'#999',backgroundColor:'transparent',borderWidth:1.5,borderDash:[5,3],pointRadius:3,pointBackgroundColor:'#999',tension:0.3,spanGaps:true,yAxisID:'y2'},
-    {label:'B-ROAS(온라인)',data:R.map(r=>r.adSpend>0?Math.round(r.online/r.adSpend*100):null),type:'line',borderColor:'#2C2C2C',backgroundColor:'transparent',borderWidth:1.5,borderDash:[5,3],pointRadius:3,pointBackgroundColor:'#2C2C2C',tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:'B-ROAS(전체)',data:R.map(r=>r.adSpend>0?Math.round(r.total/r.adSpend*100):null),type:'line',borderColor:'#999',backgroundColor:'transparent',borderWidth:1.5,borderDash:[5,3],pointRadius:3,pointBackgroundColor:'#999',tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:'B-ROAS(온라인)',data:R.map(r=>r.adSpend>0&&r.online>0?Math.round(r.online/r.adSpend*100):null),type:'line',borderColor:'#2C2C2C',backgroundColor:'transparent',borderWidth:1.5,borderDash:[5,3],pointRadius:3,pointBackgroundColor:'#2C2C2C',tension:0.3,spanGaps:true,yAxisID:'y2'},
   ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>{
     if(i.datasetIndex===2)return`온라인 비중: ${i.raw}%`;
     if(i.datasetIndex===3)return`B-ROAS(전체): ${i.raw}%`;
@@ -1547,7 +1595,7 @@ function renderChannelCharts(ch){
   // 1-2
   mk('c12',{type:'bar',data:{labels,datasets:[
     {label:'광고 전환매출',data:R.map(r=>Math.round((r.adSales||0)/1e4)),backgroundColor:'rgba(44,44,44,0.85)',borderColor:'#2C2C2C',borderWidth:1,borderRadius:3,yAxisID:'y'},
-    {label:'B-ROAS',data:R.map(r=>r.adSpend>0?Math.round(r.online/r.adSpend*100):null),type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:'B-ROAS',data:R.map(r=>r.adSpend>0&&r.online>0?Math.round(r.online/r.adSpend*100):null),type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
   ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>i.datasetIndex===1?`B-ROAS: ${i.raw}%`:`${i.dataset.label}: ${i.raw.toLocaleString()}만원`}}},
   scales:{
     x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
@@ -1590,15 +1638,15 @@ function renderJsCharts(ch,R,labels,avgRatio){
 
   // 1-1 전체매출 + BROAS 점선
   mk('js_c11',{type:'bar',data:{labels,datasets:[
-    {label:'전체 매출',data:R.map(r=>Math.round((r.total||0)/1e4)),backgroundColor:'rgba(160,160,160,0.5)',borderColor:'#999',borderWidth:1,borderRadius:3,yAxisID:'y'},
-    {label:'자사몰 매출',data:R.map(r=>Math.round((r.online||0)/1e4)),backgroundColor:'rgba(44,44,44,0.85)',borderColor:'#2C2C2C',borderWidth:1,borderRadius:3,yAxisID:'y'},
-    {label:'B-ROAS',data:R.map(r=>r.bRoas!=null?Math.round(r.bRoas*100):null),type:'line',borderColor:'#7B2D8B',backgroundColor:'transparent',borderWidth:2,borderDash:[5,3],pointRadius:3,tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:'자사몰 매출',data:R.map(r=>Math.round((r.total||0)/1e4)),backgroundColor:'rgba(44,44,44,0.85)',borderColor:'#2C2C2C',borderWidth:1,borderRadius:3,yAxisID:'y'},
+    {label:'B-ROAS',data:R.map(r=>r.bRoas!=null?Math.round(r.bRoas*100):null),type:'line',borderColor:'#7B2D8B',backgroundColor:'transparent',borderWidth:2,borderDash:[5,3],pointRadius:3,pointBackgroundColor:'#7B2D8B',tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:'META ROAS',data:R.map(r=>r.metaRoas!=null?Math.round(r.metaRoas*100):null),type:'line',borderColor:'#2a78d6',backgroundColor:'transparent',borderWidth:2,borderDash:[5,3],pointRadius:3,pointBackgroundColor:'#2a78d6',tension:0.3,spanGaps:true,yAxisID:'y2'},
   ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
-    tooltip:{callbacks:{label:i=>i.datasetIndex===2?`B-ROAS: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
+    tooltip:{callbacks:{label:i=>i.yAxisID==='y2'?`${i.dataset.label}: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
     scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
       y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
       y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}}},
-  },[llpFn(2,'#7B2D8B')]);
+  },[llpFn(1,'#7B2D8B'),llpFn(2,'#2a78d6')]);
 
   // BEP 기준선 플러그인
   const bepLine=(bepVal,color='#8B1A1A')=>({
@@ -1618,7 +1666,7 @@ function renderJsCharts(ch,R,labels,avgRatio){
   // 1-2 광고전환매출 + BROAS + BEP 기준선
   mk('js_c12',{type:'bar',data:{labels,datasets:[
     {label:'광고 전환매출',data:R.map(r=>Math.round((r.adSales||0)/1e4)),backgroundColor:'rgba(44,44,44,0.85)',borderColor:'#2C2C2C',borderWidth:1,borderRadius:3,yAxisID:'y'},
-    {label:'B-ROAS',data:R.map(r=>r.adSpend>0?Math.round(r.online/r.adSpend*100):null),type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:'B-ROAS',data:R.map(r=>r.adSpend>0&&r.online>0?Math.round(r.online/r.adSpend*100):null),type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
   ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
     tooltip:{callbacks:{label:i=>i.datasetIndex===1?`B-ROAS: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
     scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
@@ -1645,41 +1693,33 @@ function renderJsCharts(ch,R,labels,avgRatio){
 
   // 2-2 품목별 전환매출 막대 + ROAS 꺾은선 + BEP 기준선
   const p22key=curProd[ch].p22;
-  const roasColors=['#C05E1A','#2a78d6','#7B2D8B','#1baf7a','#B8860B'];
-  if(p22key==='all'){
-    const barDs=JS_PRODS_NO_ALL.map((p,i)=>({
-      label:p.l+' 전환',data:R.map(r=>Math.round((r[p.k+'CV']||0)/1e4)),
-      backgroundColor:shades[i%shades.length],borderColor:YELLOWB,borderWidth:1,borderRadius:2,yAxisID:'y',
-    }));
-    const lineDs=JS_PRODS_NO_ALL.map((p,i)=>({
-      label:p.l+' ROAS',data:R.map(r=>r[p.k+'Roas']!=null?Math.round(r[p.k+'Roas']*100):null),
-      type:'line',borderColor:roasColors[i%roasColors.length],backgroundColor:'transparent',
-      borderWidth:1.5,pointRadius:2,tension:0.3,spanGaps:true,yAxisID:'y2',
-    }));
-    mk('js_c22',{type:'bar',data:{labels,datasets:[...barDs,...lineDs]},options:{
-      responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
-        tooltip:{callbacks:{label:i=>i.yAxisID==='y2'?`${i.dataset.label}: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
-      scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
-        y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
-        y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}}},
-    },[bepLine(BEP.js)]);
-  } else {
-    const cvData=R.map(r=>Math.round((r[p22key+'CV']||0)/1e4));
-    const roasData=R.map(r=>r[p22key+'Roas']!=null?Math.round(r[p22key+'Roas']*100):null);
-    mk('js_c22',{type:'bar',data:{labels,datasets:[
-      {label:p22key+' 전환매출',data:cvData,backgroundColor:YELLOW,borderColor:YELLOWB,borderWidth:1,borderRadius:3,yAxisID:'y'},
-      {label:p22key+' ROAS',data:roasData,type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
-    ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
-      tooltip:{callbacks:{label:i=>i.datasetIndex===1?`ROAS: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
-      scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
-        y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
-        y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}}},
-    },[llpFn(1,'#C05E1A'),bepLine(BEP.js)]);
-  }
+  const isAll=p22key==='all';
+  // 막대: 광고 전환매출 / 꺾은선: 광고 ROAS · B-ROAS / 기준선: BEP(B-ROAS 기준)
+  const cvData = isAll
+    ? R.map(r=>Math.round((r.adSales||0)/1e4))
+    : R.map(r=>Math.round((r[p22key+'CV']||0)/1e4));
+  const roasData = isAll
+    ? R.map(r=>r.totalRoas!=null?Math.round(r.totalRoas*100):null)
+    : R.map(r=>r[p22key+'Roas']!=null?Math.round(r[p22key+'Roas']*100):null);
+  const broasData = isAll
+    ? R.map(r=>r.bRoas!=null?Math.round(r.bRoas*100):null)
+    : R.map(r=>{const sp=r[p22key+'Spend']||0, rev=r[p22key]||0; return sp>0?Math.round(rev/sp*100):null;});
+  const bepVal = BEP_PROD.js[p22key] ?? BEP.js;
+
+  mk('js_c22',{type:'bar',data:{labels,datasets:[
+    {label:'광고 전환매출',data:cvData,backgroundColor:YELLOW,borderColor:YELLOWB,borderWidth:1,borderRadius:3,yAxisID:'y'},
+    {label:'광고 ROAS',data:roasData,type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:'B-ROAS',data:broasData,type:'line',borderColor:'#7B2D8B',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#7B2D8B',tension:0.3,spanGaps:true,yAxisID:'y2'},
+  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
+    tooltip:{callbacks:{label:i=>i.yAxisID==='y2'?`${i.dataset.label}: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
+    scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
+      y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
+      y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}}},
+  },[llpFn(1,'#C05E1A'),bepLine(bepVal)]);
 }
 
 const PRODS_NO_ALL=[
-  {k:'masca',l:'마스카라'},{k:'nose',l:'노세범'},{k:'milk',l:'헤어밀크'},{k:'spx',l:'슈퍼픽스'}
+  {k:'masca',l:'마스카라'},{k:'nose',l:'노세범'},{k:'milk',l:'헤어밀크'},{k:'spx',l:'슈퍼픽스'},{k:'matcha',l:'말차샴푸'}
 ];
 const YELLOW='rgba(255,200,0,0.88)',YELLOWB='#B8860B';
 const shades=['rgba(255,200,0,0.9)','rgba(225,170,0,0.85)','rgba(195,140,0,0.8)','rgba(160,110,0,0.75)','rgba(130,85,0,0.7)'];
@@ -1690,10 +1730,10 @@ function render21(ch,R,labels,avgRatio){
   const key=curProd[ch].p21;
 
   if(key==='all'){
-    charts[id]=newChart(el,{type:'bar',data:{labels,datasets:PRODS_NO_ALL.map((p,i)=>({
-      label:p.l,data:R.map(r=>{const t=r[p.k]??0;return t>0?Math.round(t*avgRatio/1e4):null;}),
-      backgroundColor:shades[i%shades.length],borderColor:YELLOWB,borderWidth:1,borderRadius:2,
-    }))},options:{responsive:true,maintainAspectRatio:false,
+    charts[id]=newChart(el,{type:'bar',data:{labels,datasets:[
+      {label:'전체 온라인 매출',data:R.map(r=>Math.round((r.online||0)/1e4)),
+        backgroundColor:YELLOW,borderColor:YELLOWB,borderWidth:1,borderRadius:3},
+    ]},options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
       scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},y:{ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}}}}});
     return;
@@ -1734,7 +1774,7 @@ function render22(ch,R,labels,avgRatio){
   const roasData=R.map(r=>r[key+'Roas']!=null?Math.round(r[key+'Roas']*100):null);
   charts[id]=newChart(el,{type:'bar',data:{labels,datasets:[
     {label:key+' 전환매출',data:cvData,backgroundColor:YELLOW,borderColor:YELLOWB,borderWidth:1,borderRadius:3,yAxisID:'y'},
-    {label:key+' 통합ROAS',data:roasData,type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:key+' ROAS',data:roasData,type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
   ]},options:{responsive:true,maintainAspectRatio:false,
     plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>i.datasetIndex===1?`ROAS: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
     scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
@@ -1796,7 +1836,7 @@ function render32(ch,R,labels){
   const id=`${ch}_c32`;if(charts[id]){try{charts[id].destroy();}catch(e){}}
   const el=document.getElementById(id);if(!el)return;
   const key=curProd[ch].p32;
-  const noData=key==='matcha'&&ch==='oy';
+  const noData=false;
 
   const mSpend=k=>k==='all'?R.map(r=>Math.round((r.metaSpend||0)/1e4)):R.map(r=>Math.round((r[k+'MetaSpend']||0)/1e4));
   const cSpend=k=>k==='all'?R.map(r=>Math.round((r.cpcSpend||0)/1e4)):R.map(r=>Math.round((r[k+'CpcSpend']||0)/1e4));
@@ -1815,14 +1855,80 @@ function render32(ch,R,labels){
     scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
       y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
       y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}}},
-  plugins:noData?[]:[llpFn(2,'#C05E1A')]});
-
-  if(noData){
-    const ctx=el.getContext('2d');
-    ctx.save();ctx.fillStyle='#aaa';ctx.font='13px Malgun Gothic';ctx.textAlign='center';
-    ctx.fillText('말차샴푸 — 7월 올리브영 런칭 예정',el.width/2,el.height/2);ctx.restore();
-  }
+  plugins:[llpFn(2,'#C05E1A')]});
 }
+
+/* ── 진단: 특정 날짜의 원본 시트 행 확인 ──
+   사용법: dumpRow('oyDaily','2026-07-26')   ('oyDaily' | 'oyPaid' | 'js')
+   해당 날짜 전후 행의 원본 값을 가공 없이 출력 — 빈칸/#N/A/#REF! 구분 가능 */
+window.dumpRow = function(which='oyDaily', dateStr, span=3){
+  const raw=(window.RAW||{})[which];
+  if(!raw){console.warn('RAW 없음 — 먼저 "Sheets에서 자동 불러오기" 실행');return;}
+  const dcol = which==='js'?3:4;
+  const norm=v=>{const m=String(v??'').match(/(\d{2,4})[.\-\/\s]+(\d{1,2})[.\-\/\s]+(\d{1,2})/);
+    if(!m)return null;let y=+m[1];if(y<100)y+=2000;
+    return `${y}-${String(+m[2]).padStart(2,'0')}-${String(+m[3]).padStart(2,'0')}`;};
+  const idx=raw.findIndex(r=>norm(r?.[dcol])===dateStr);
+  if(idx<0){console.warn(dateStr+' 행을 못 찾음');return;}
+  const cols = which==='js'
+    ? [{i:3,n:'날짜'},{i:5,n:'방문자'},{i:6,n:'구매건수'},{i:8,n:'전체매출'},{i:9,n:'자사몰매출'},{i:32,n:'전체지출'},{i:34,n:'메타지출'},{i:47,n:'메타전환'}]
+    : which==='oyDaily'
+      ? [{i:4,n:'날짜'},{i:9,n:'전체매출(J)'},{i:10,n:'온라인매출(K)'},{i:11,n:'L'},{i:12,n:'M'}]
+      : [{i:4,n:'날짜'},{i:6,n:'전환매출'},{i:7,n:'META전환'},{i:8,n:'CPC전환'},{i:9,n:'광고지출'},{i:10,n:'META지출'},{i:11,n:'CPC지출'}];
+  const out=[];
+  for(let i=Math.max(0,idx-span);i<=Math.min(raw.length-1,idx+span);i++){
+    const o={행:i};
+    cols.forEach(c=>{const v=raw[i]?.[c.i];
+      o[c.n]= v===undefined?'(undefined)' : v==='' ? '(빈칸)' : v;});
+    out.push(o);
+  }
+  console.log(`[${which}] ${dateStr} = ${idx}행 (0-based) 기준 ±${span}행`);
+  console.table(out);
+  return out;
+};
+
+/* ── 진단: 월별 매출·온라인 실측 ──
+   사용법: 콘솔에서  dumpMonthly('oy')   ('oy' | 'js')
+   파싱된 값과 원본 시트 값을 나란히 비교해 어디서 0이 되는지 확인 */
+window.dumpMonthly = function(ch='oy'){
+  const rows=getRows(ch,'monthly');
+  console.log(`[${ch}] 파싱 결과 — 원본 sales ${DATA[ch].sales.length}행 / paid ${DATA[ch].paid.length}행`);
+  console.table(rows.map(r=>({
+    월:r.key, 전체매출:Math.round(r.total), 온라인매출:Math.round(r.online),
+    온라인비중:r.total>0?(r.online/r.total*100).toFixed(1)+'%':'-',
+    광고지출:Math.round(r.adSpend), 전환매출:Math.round(r.adSales),
+  })));
+  // 원본 일별에서 online=0 인 날 카운트
+  const bad=DATA[ch].sales.filter(r=>(r.total||0)>0&&(r.online||0)===0);
+  console.log(`전체매출>0 이면서 온라인매출=0 인 날: ${bad.length}일`);
+  if(bad.length){
+    console.log('해당 날짜 샘플:', bad.slice(0,15).map(r=>new Date(r.date).toISOString().slice(0,10)).join(', '));
+  }
+  return rows;
+};
+
+/* ── 진단: 시트 열 실측용 ──
+   사용법: 콘솔에서  dumpCols('oyPaid')   ('oyDaily' | 'oyPaid' | 'js')
+   헤더 후보 3행과 값이 있는 샘플 데이터 행을 열 인덱스와 함께 출력 */
+window.dumpCols = function(which='oyPaid', sampleRow){
+  const raw = (window.RAW||{})[which];
+  if(!raw){console.warn('RAW 없음 — 먼저 "Sheets에서 자동 불러오기" 실행');return;}
+  console.log(`[${which}] 총 ${raw.length}행 / 최대 ${Math.max(...raw.slice(0,10).map(r=>r?.length||0))}열`);
+  const si = sampleRow ?? raw.findIndex((r,i)=>i>2 && r && r.filter(v=>v!=='' && v!=null).length>15);
+  const width = Math.max(...raw.slice(0,Math.max(si+1,6)).map(r=>r?.length||0));
+  const out=[];
+  for(let c=0;c<width;c++){
+    out.push({
+      idx:c,
+      col:(c<26?String.fromCharCode(65+c):String.fromCharCode(64+Math.floor(c/26))+String.fromCharCode(65+c%26)),
+      h0:raw[0]?.[c]??'', h1:raw[1]?.[c]??'', h2:raw[2]?.[c]??'',
+      sample:raw[si]?.[c]??''
+    });
+  }
+  console.log(`샘플 데이터 행 = ${si}행(0-based)`);
+  console.table(out);
+  return out;
+};
 
 /* ── 초기화 ── */
 sb.auth.onAuthStateChange((event,session)=>{
