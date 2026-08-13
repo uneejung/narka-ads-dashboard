@@ -77,6 +77,8 @@ body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:#F8
 .kpi{background:#fff;border-radius:10px;padding:13px 15px;border:1px solid #E8DEB4}
 .kpi-label{font-size:10px;color:#aaa;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px}
 .kpi-val{font-size:20px;font-weight:700;color:#2C2C2C;line-height:1.1}
+.kpi-val.kpi-full{font-size:16px;letter-spacing:-0.3px;word-break:break-all}
+.kpi-val.kpi-full small{font-size:11px;color:#aaa;font-weight:600;margin-left:2px}
 .kpi-sub{font-size:10px;margin-top:4px}
 .c-up{color:#2D6A4F}.c-dn{color:#8B1A1A}.c-neu{color:#888}
 
@@ -122,6 +124,8 @@ body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;background:#F8
 .summary-kpi{background:#F8F3DA;border-radius:8px;padding:10px 12px}
 .summary-kpi-label{font-size:10px;color:#888;margin-bottom:3px}
 .summary-kpi-val{font-size:16px;font-weight:700;color:#2C2C2C}
+.summary-kpi-val.sk-full{font-size:14px;letter-spacing:-0.3px;word-break:break-all}
+.summary-kpi-val.sk-full small{font-size:10px;color:#aaa;font-weight:600;margin-left:2px}
 .summary-kpi-sub{font-size:10px;color:#aaa;margin-top:2px}
 .summary-chart-wrap{height:140px;position:relative}
 
@@ -589,9 +593,17 @@ function parseOySheets(raw1, raw2){
     });
   }
 
-  // raw2([국내] paid) 파싱 — 콘솔 확인 결과 기준
-  // 4=날짜  6=전환매출total 7=META전환 8=CPC전환
-  // 9=광고지출total 10=META지출 11=CPC지출  13=ROAS 14=BROAS
+  // raw2([국내] paid) 파싱 — 2026.08 콘솔 실측(dumpCols) 기준, 총 56열
+  // 4=날짜
+  // [전환매출] 6=전체 7=META 8=CPC
+  // [광고지출] 9=전체 10=META 11=CPC  12=CRM
+  // [ROAS]    13=전체 14=META 15=CPC
+  // [품목별 ROAS(시트 계산값, 미사용)] 16=마스카라 17=노세범 18=밀크 19=슈퍼픽스 20=말차 21=립소르베 22=헤어미스트
+  // [품목별 광고지출] 품목당 META,CPC 2열씩
+  //   23/24=마스카라 25/26=노세범 27/28=밀크 29/30=슈퍼픽스 31/32=말차 33/34=립소르베 35/36=헤어미스트 37/38=기타 39=기타CRM
+  // [품목별 전환매출] 품목당 META,CPC 2열씩
+  //   40/41=마스카라 42/43=노세범 44/45=밀크 46/47=슈퍼픽스 48/49=말차 50/51=립소르베 52/53=헤어미스트 54/55=기타
+  // 검증: 23~39 META합 = 10열(전체지출 META), 40~55 META합 = 7열(전환매출 META) 일치 확인함
   for(let i=3; i<raw2.length; i++){
     const r2=raw2[i];
     const v=r2?.[4]; if(!v)continue;
@@ -609,18 +621,26 @@ function parseOySheets(raw1, raw2){
     paid.push({date:dt,
       adSales, metaSales, cpcSales,
       adSpend, metaSpend, cpcSpend,
-      mascaSpend:g(59,r2), noseSpend:g(61,r2), milkSpend:g(62,r2), spxSpend:g(58,r2), lipSpend:0,
-      mascaMetaSpend:g(64,r2), mascaCpcSpend:g(69,r2),
-      noseMetaSpend:g(65,r2), noseCpcSpend:g(70,r2),
-      milkMetaSpend:g(66,r2), milkCpcSpend:g(71,r2),
-      spxMetaSpend:g(63,r2), spxCpcSpend:g(68,r2),
-      lipMetaSpend:0, lipCpcSpend:0,
-      mascaCV:g(35,r2), noseCV:g(36,r2), milkCV:g(37,r2), spxCV:g(34,r2), lipCV:0,
-      mascaMetaCV:g(49,r2), mascaCpcCV:g(39,r2),
-      noseMetaCV:g(50,r2), noseCpcCV:g(40,r2),
-      milkMetaCV:g(51,r2), milkCpcCV:g(41,r2),
-      spxMetaCV:g(48,r2), spxCpcCV:g(38,r2),
-      lipMetaCV:0, lipCpcCV:0,
+      // 품목별 광고지출 (23~34: 품목당 META, CPC 순)
+      mascaMetaSpend:g(23,r2), mascaCpcSpend:g(24,r2),
+      noseMetaSpend:g(25,r2),  noseCpcSpend:g(26,r2),
+      milkMetaSpend:g(27,r2),  milkCpcSpend:g(28,r2),
+      spxMetaSpend:g(29,r2),   spxCpcSpend:g(30,r2),
+      matchaMetaSpend:g(31,r2),matchaCpcSpend:g(32,r2),
+      lipMetaSpend:g(33,r2),   lipCpcSpend:g(34,r2),
+      mascaSpend:g(23,r2)+g(24,r2), noseSpend:g(25,r2)+g(26,r2),
+      milkSpend:g(27,r2)+g(28,r2),  spxSpend:g(29,r2)+g(30,r2),
+      matchaSpend:g(31,r2)+g(32,r2),lipSpend:g(33,r2)+g(34,r2),
+      // 품목별 광고 전환매출 (40~51: 품목당 META, CPC 순)
+      mascaMetaCV:g(40,r2), mascaCpcCV:g(41,r2),
+      noseMetaCV:g(42,r2),  noseCpcCV:g(43,r2),
+      milkMetaCV:g(44,r2),  milkCpcCV:g(45,r2),
+      spxMetaCV:g(46,r2),   spxCpcCV:g(47,r2),
+      matchaMetaCV:g(48,r2),matchaCpcCV:g(49,r2),
+      lipMetaCV:g(50,r2),   lipCpcCV:g(51,r2),
+      mascaCV:g(40,r2)+g(41,r2), noseCV:g(42,r2)+g(43,r2),
+      milkCV:g(44,r2)+g(45,r2),  spxCV:g(46,r2)+g(47,r2),
+      matchaCV:g(48,r2)+g(49,r2),lipCV:g(50,r2)+g(51,r2),
     });
   }
 
@@ -914,18 +934,18 @@ function buildIntegrated(){
 
   const oySummary=`
     <div class="summary-kpi-row">
-      <div class="summary-kpi"><div class="summary-kpi-label">전체 매출</div><div class="summary-kpi-val">${fmt(Math.round(oyTot/1e8))}억</div></div>
-      <div class="summary-kpi"><div class="summary-kpi-label">온라인 매출</div><div class="summary-kpi-val">${fmt(Math.round(oyOnl/1e8))}억</div><div class="summary-kpi-sub">비중 ${fmtPct(oyTot>0?oyOnl/oyTot:null)}</div></div>
-      <div class="summary-kpi"><div class="summary-kpi-label">광고 지출</div><div class="summary-kpi-val">${fmt(Math.round(oyAdSp/1e8))}억</div></div>
+      <div class="summary-kpi"><div class="summary-kpi-label">전체 매출</div><div class="summary-kpi-val sk-full">${fmt(Math.round(oyTot))}<small>원</small></div></div>
+      <div class="summary-kpi"><div class="summary-kpi-label">온라인 매출</div><div class="summary-kpi-val sk-full">${fmt(Math.round(oyOnl))}<small>원</small></div><div class="summary-kpi-sub">비중 ${fmtPct(oyTot>0?oyOnl/oyTot:null)}</div></div>
+      <div class="summary-kpi"><div class="summary-kpi-label">광고 지출</div><div class="summary-kpi-val sk-full">${fmt(Math.round(oyAdSp))}<small>원</small></div></div>
       <div class="summary-kpi"><div class="summary-kpi-label">B-ROAS</div><div class="summary-kpi-val" style="color:#7B2D8B">${fmtRoas(oyAdSp>0?oyOnl/oyAdSp:null)}</div></div>
     </div>
     <div class="summary-chart-wrap"><canvas id="oyIntChart"></canvas></div>`;
 
   const jsSummary=`
     <div class="summary-kpi-row">
-      <div class="summary-kpi"><div class="summary-kpi-label">전체 매출</div><div class="summary-kpi-val">${fmt(Math.round(jsTot/1e8))}억</div></div>
-      <div class="summary-kpi"><div class="summary-kpi-label">온라인 매출</div><div class="summary-kpi-val">${fmt(Math.round(jsOnl/1e8))}억</div><div class="summary-kpi-sub">비중 ${fmtPct(jsTot>0?jsOnl/jsTot:null)}</div></div>
-      <div class="summary-kpi"><div class="summary-kpi-label">광고 지출</div><div class="summary-kpi-val">${fmt(Math.round(jsAdSp/1e8))}억</div></div>
+      <div class="summary-kpi"><div class="summary-kpi-label">전체 매출</div><div class="summary-kpi-val sk-full">${fmt(Math.round(jsTot))}<small>원</small></div></div>
+      <div class="summary-kpi"><div class="summary-kpi-label">온라인 매출</div><div class="summary-kpi-val sk-full">${fmt(Math.round(jsOnl))}<small>원</small></div><div class="summary-kpi-sub">비중 ${fmtPct(jsTot>0?jsOnl/jsTot:null)}</div></div>
+      <div class="summary-kpi"><div class="summary-kpi-label">광고 지출</div><div class="summary-kpi-val sk-full">${fmt(Math.round(jsAdSp))}<small>원</small></div></div>
       <div class="summary-kpi"><div class="summary-kpi-label">B-ROAS</div><div class="summary-kpi-val" style="color:#7B2D8B">${fmtRoas(jsAdSp>0?jsOnl/jsAdSp:null)}</div></div>
     </div>
     <div class="summary-chart-wrap"><canvas id="jsIntChart"></canvas></div>`;
@@ -952,9 +972,9 @@ function buildIntegrated(){
   </div>
 
   <div class="kpi-row" style="padding:16px 20px 0">
-    <div class="kpi"><div class="kpi-label">통합 전체 매출</div><div class="kpi-val">${fmt(Math.round(totRev/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div><div class="kpi-sub c-neu">OY ${fmt(Math.round(oyTot/1e8))}억 + 자사 ${fmt(Math.round(jsTot/1e8))}억</div></div>
-    <div class="kpi"><div class="kpi-label">통합 온라인 매출</div><div class="kpi-val">${fmt(Math.round(totOnl/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div><div class="kpi-sub c-neu">비중 ${fmtPct(totRev>0?totOnl/totRev:null)}</div></div>
-    <div class="kpi"><div class="kpi-label">통합 광고 지출</div><div class="kpi-val">${fmt(Math.round(totAdSp/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div></div>
+    <div class="kpi"><div class="kpi-label">통합 전체 매출</div><div class="kpi-val kpi-full">${fmt(Math.round(totRev))}<small>원</small></div><div class="kpi-sub c-neu">OY ${fmt(Math.round(oyTot))} + 자사 ${fmt(Math.round(jsTot))}</div></div>
+    <div class="kpi"><div class="kpi-label">통합 온라인 매출</div><div class="kpi-val kpi-full">${fmt(Math.round(totOnl))}<small>원</small></div><div class="kpi-sub c-neu">비중 ${fmtPct(totRev>0?totOnl/totRev:null)}</div></div>
+    <div class="kpi"><div class="kpi-label">통합 광고 지출</div><div class="kpi-val kpi-full">${fmt(Math.round(totAdSp))}<small>원</small></div></div>
     <div class="kpi" style="border-left:3px solid #7B2D8B"><div class="kpi-label">통합 B-ROAS</div><div class="kpi-val" style="color:#7B2D8B">${fmtRoas(totAdSp>0?totOnl/totAdSp:null)}</div><div class="kpi-sub c-neu">온라인매출 ÷ 광고지출</div></div>
   </div>
 
@@ -1160,9 +1180,9 @@ function buildJsDash(rows, valid, tab){
 
   <!-- KPI 5개 -->
   <div class="kpi-row">
-    <div class="kpi"><div class="kpi-label">전체 매출</div><div class="kpi-val">${fmt(Math.round(tot/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div></div>
-    <div class="kpi"><div class="kpi-label">광고 지출</div><div class="kpi-val">${fmt(Math.round(adSp/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div><div class="kpi-sub c-neu">지출/매출 ${fmtPct(tot>0?adSp/tot:null)}</div></div>
-    <div class="kpi"><div class="kpi-label">광고 전환매출</div><div class="kpi-val">${fmt(Math.round(adCv/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div><div class="kpi-sub ${adSp>0&&adCv/adSp<1.57?'c-dn':'c-up'}">의존도 ${fmtPct(tot>0?adCv/tot:null)}</div></div>
+    <div class="kpi"><div class="kpi-label">전체 매출</div><div class="kpi-val kpi-full">${fmt(Math.round(tot))}<small>원</small></div></div>
+    <div class="kpi"><div class="kpi-label">광고 지출</div><div class="kpi-val kpi-full">${fmt(Math.round(adSp))}<small>원</small></div><div class="kpi-sub c-neu">지출/매출 ${fmtPct(tot>0?adSp/tot:null)}</div></div>
+    <div class="kpi"><div class="kpi-label">광고 전환매출</div><div class="kpi-val kpi-full">${fmt(Math.round(adCv))}<small>원</small></div><div class="kpi-sub ${adSp>0&&adCv/adSp<1.57?'c-dn':'c-up'}">의존도 ${fmtPct(tot>0?adCv/tot:null)}</div></div>
     <div class="kpi"><div class="kpi-label">매체 ROAS (META)</div><div class="kpi-val ${roas&&roas>=1.57?'c-up':'c-dn'}">${fmtRoas(roas)}</div><div class="kpi-sub c-neu">BEP ${BEP.js}%</div></div>
     <div class="kpi" style="border-left:3px solid #7B2D8B"><div class="kpi-label">B-ROAS</div><div class="kpi-val" style="color:#7B2D8B">${fmtRoas(broas)}</div><div class="kpi-sub c-neu">온라인매출 ÷ 광고지출</div></div>
   </div>
@@ -1299,9 +1319,9 @@ function buildChannelDash(ch){
 
   <!-- KPI -->
   <div class="kpi-row">
-    <div class="kpi"><div class="kpi-label">전체 매출</div><div class="kpi-val">${fmt(Math.round(tot/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div><div class="kpi-sub c-neu">온라인 비중 ${fmtPct(onlR)}</div></div>
-    <div class="kpi"><div class="kpi-label">온라인 매출</div><div class="kpi-val">${fmt(Math.round(onl/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div><div class="kpi-sub ${adDep&&adDep>.5?'c-dn':'c-up'}">광고 의존도 ${fmtPct(adDep)}</div></div>
-    <div class="kpi"><div class="kpi-label">광고 지출</div><div class="kpi-val">${fmt(Math.round(adSp/1e8))}<small style="font-size:12px;color:#aaa"> 억</small></div><div class="kpi-sub c-neu">지출/온라인 ${fmtPct(adRate)}</div></div>
+    <div class="kpi"><div class="kpi-label">전체 매출</div><div class="kpi-val kpi-full">${fmt(Math.round(tot))}<small>원</small></div><div class="kpi-sub c-neu">온라인 비중 ${fmtPct(onlR)}</div></div>
+    <div class="kpi"><div class="kpi-label">온라인 매출</div><div class="kpi-val kpi-full">${fmt(Math.round(onl))}<small>원</small></div><div class="kpi-sub ${adDep&&adDep>.5?'c-dn':'c-up'}">광고 의존도 ${fmtPct(adDep)}</div></div>
+    <div class="kpi"><div class="kpi-label">광고 지출</div><div class="kpi-val kpi-full">${fmt(Math.round(adSp))}<small>원</small></div><div class="kpi-sub c-neu">지출/온라인 ${fmtPct(adRate)}</div></div>
     <div class="kpi" style="border-left:3px solid #7B2D8B"><div class="kpi-label">B-ROAS</div><div class="kpi-val" style="color:#7B2D8B">${fmtRoas(broas)}</div><div class="kpi-sub c-neu">온라인매출 ÷ 광고지출</div></div>
     <div class="kpi"><div class="kpi-label">매체 ROAS</div><div class="kpi-val ${roas>=5?'c-up':roas>=3?'c-neu':'c-dn'}">${fmtRoas(roas)}</div><div class="kpi-sub c-neu">META ${fmtRoas(metaRoas)} / CPC ${fmtRoas(cpcRoas)}</div></div>
   </div>
@@ -1857,6 +1877,35 @@ function render32(ch,R,labels){
       y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}}},
   plugins:[llpFn(2,'#C05E1A')]});
 }
+
+/* ── 진단: OY 품목별 광고 열 매핑 정합성 검증 ──
+   사용법: verifyOy()
+   품목별 합계가 전체값과 일치하는지 전 기간 대조. 열이 밀리면 즉시 드러남 */
+window.verifyOy = function(){
+  const rows=DATA.oy.paid;
+  if(!rows.length){console.warn('데이터 없음');return;}
+  const P=['masca','nose','milk','spx','matcha','lip'];
+  const bad=[];
+  rows.forEach(r=>{
+    const sumSpend=P.reduce((a,k)=>a+(r[k+'Spend']||0),0);
+    const sumCV=P.reduce((a,k)=>a+(r[k+'CV']||0),0);
+    // 기타·헤어미스트는 품목 목록에 없으므로 품목합 <= 전체 여야 함
+    const d1=sumSpend-(r.adSpend||0), d2=sumCV-(r.adSales||0);
+    if(d1>1||d2>1)bad.push({날짜:new Date(r.date).toISOString().slice(0,10),
+      품목지출합:Math.round(sumSpend),전체지출:Math.round(r.adSpend),
+      품목전환합:Math.round(sumCV),전체전환:Math.round(r.adSales)});
+  });
+  if(bad.length){
+    console.warn(`⚠️ 품목합이 전체를 초과한 날 ${bad.length}일 — 열 매핑 의심`);
+    console.table(bad.slice(0,20));
+  } else {
+    console.log(`✅ ${rows.length}일 전체 정합성 이상 없음 (품목합 ≤ 전체)`);
+  }
+  const cov=P.map(k=>({품목:k, 지출있는날:rows.filter(r=>(r[k+'Spend']||0)>0).length,
+    전환있는날:rows.filter(r=>(r[k+'CV']||0)>0).length}));
+  console.table(cov);
+  return {bad,cov};
+};
 
 /* ── 진단: 특정 날짜의 원본 시트 행 확인 ──
    사용법: dumpRow('oyDaily','2026-07-26')   ('oyDaily' | 'oyPaid' | 'js')
