@@ -439,7 +439,7 @@ function showApp(){
 
 /* ── Supabase 데이터 저장/로드 ── */
 // 파서 로직을 바꿀 때마다 올릴 것. 값이 다르면 옛 캐시를 버리고 시트를 다시 읽는다.
-const PARSER_VERSION = 12;
+const PARSER_VERSION = 13;
 
 function saveLocal(ch){
   try{
@@ -1832,8 +1832,8 @@ function render12(ch,R,labels,avgRatio){
     x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
     y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
     y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}},
-  }}},
-  bepPlugins);
+  }},
+  plugins:bepPlugins});
 }
 
 function render21(ch,R,labels,avgRatio){
