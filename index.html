@@ -260,22 +260,31 @@ tbody td:first-child{text-align:left;color:#5C5C5C;font-weight:600}
 'use strict';
 
 // 막대+꺾은선 혼합 차트에서 꺾은선이 항상 막대 위(앞)에 보이도록 전역 draw order 고정.
-// Chart.js는 order값이 낮을수록 나중에(위에) 그려짐 — line을 bar보다 낮게 설정.
+// Chart.js는 order 값이 클수록 나중에(=위에) 그려짐 — line을 bar보다 높게 설정.
 if(typeof Chart!=='undefined'){
   Chart.defaults.datasets.bar = Chart.defaults.datasets.bar || {};
-  Chart.defaults.datasets.bar.order = 2;
+  Chart.defaults.datasets.bar.order = 1;
   Chart.defaults.datasets.line = Chart.defaults.datasets.line || {};
-  Chart.defaults.datasets.line.order = 1;
+  Chart.defaults.datasets.line.order = 2;
 }
 
 // 꺾은선 색상 단일 소스 — 지표별로 전 차트가 동일 색을 쓰도록 통일
 const LINE_COLORS = {
-  broas:'#89857E',    // B-ROAS(브랜디드/자사몰 매출 기준)
-  roas:'#1C1502',     // 광고 ROAS(통합/일반)
-  metaRoas:'#174D86', // META ROAS
-  cpcRoas:'#6690BD',  // CPC ROAS
-  bep:'#ED5A5D',      // BEP 기준선
+  broas:'#89857E',    // B-ROAS(브랜디드/자사몰 매출 기준) — 점선
+  roas:'#1C1502',     // 광고 ROAS(통합/일반) — 실선
+  metaRoas:'#174D86', // META ROAS — 실선
+  cpcRoas:'#6690BD',  // CPC ROAS — 실선
+  bep:'#ED5A5D',      // BEP 기준선 — 점선
 };
+// hex→rgba 변환 (실선 ROAS 계열을 살짝 연하게: 굵기 70%, 불투명도 70%로 완화)
+const hexA=(hex,a)=>{
+  const h=hex.replace('#','');
+  const r=parseInt(h.slice(0,2),16),g=parseInt(h.slice(2,4),16),b=parseInt(h.slice(4,6),16);
+  return `rgba(${r},${g},${b},${a})`;
+};
+LINE_COLORS.roasSoft = hexA(LINE_COLORS.roas,0.7);
+LINE_COLORS.metaRoasSoft = hexA(LINE_COLORS.metaRoas,0.7);
+LINE_COLORS.cpcRoasSoft = hexA(LINE_COLORS.cpcRoas,0.7);
 
 const SUPABASE_URL = 'https://iogenimoqzoklogosagg.supabase.co';
 const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlvZ2VuaW1vcXpva2xvZ29zYWdnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzMjU5ODAsImV4cCI6MjA5NzkwMTk4MH0.bVsj6-P0cXZ6qfbVulSomlR0e6bRRYx4S8BOIYjh1hw';
@@ -518,7 +527,7 @@ function showApp(){
 
 /* ── Supabase 데이터 저장/로드 ── */
 // 파서 로직을 바꿀 때마다 올릴 것. 값이 다르면 옛 캐시를 버리고 시트를 다시 읽는다.
-const PARSER_VERSION = 17;
+const PARSER_VERSION = 18;
 
 function saveLocal(ch){
   try{
@@ -1295,7 +1304,7 @@ function renderIntegratedCharts(){
 
     const bar1 = isOy
       ? {label:'온라인 매출',data:rows.map(r=>Math.round((r.online||0)/1e4)),backgroundColor:'rgba(184,134,11,0.7)',borderColor:'#B8860B',borderWidth:1,borderRadius:3,yAxisID:'y'}
-      : {label:'전체 매출(오가닉 포함)',data:rows.map(r=>Math.round((r.total||0)/1e4)),backgroundColor:'rgba(160,160,160,0.4)',borderColor:'#999',borderWidth:1,borderRadius:3,yAxisID:'y'};
+      : {label:'전체 매출(오가닉 포함)',data:rows.map(r=>Math.round((r.total||0)/1e4)),backgroundColor:TOTAL_COLOR,borderColor:TOTAL_COLOR,borderWidth:1,borderRadius:3,yAxisID:'y'};
     const bar2 = {label:'광고 전환 매출',data:rows.map(r=>Math.round((r.adSales||0)/1e4)),backgroundColor:CHARCOAL,borderColor:CHARCOAL,borderWidth:1,borderRadius:3,yAxisID:'y'};
     const lineData = rows.map(r=>r.adSpend>0&&r.online>0?Math.round(r.online/r.adSpend*100):null);
     const bepVal = isOy ? BEP.oy : BEP.js;
@@ -1303,7 +1312,7 @@ function renderIntegratedCharts(){
     charts[id]=newChart(el,{type:'bar',data:{labels,datasets:[
       bar1, bar2,
       {label:'B-ROAS',data:lineData,
-        type:'line',borderColor:LINE_COLORS.broas,backgroundColor:'transparent',borderWidth:2,pointRadius:3,tension:0.3,spanGaps:true,yAxisID:'y2'},
+        type:'line',borderColor:LINE_COLORS.broas,backgroundColor:'transparent',borderWidth:2,borderDash:[5,3],pointRadius:3,pointBackgroundColor:LINE_COLORS.broas,tension:0.3,spanGaps:true,yAxisID:'y2'},
     ]},options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>i.dataset.yAxisID==='y2'?`B-ROAS: ${i.raw}%`:`${i.dataset.label}: ${i.raw.toLocaleString()}만원`}}},
       scales:{
@@ -1311,7 +1320,7 @@ function renderIntegratedCharts(){
         y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
         y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}},
       },
-      plugins:[intBepLine(bepVal)]}});
+      plugins:[intBepLine(bepVal),llpFn(2,LINE_COLORS.broas,v=>v+'%')]}});
   });
 }
 
@@ -1381,7 +1390,7 @@ function buildJsDash(rows, valid, tab){
       <h4>유입자수 · 구매건수 · 전환율</h4>
       <div class="chart-sub">막대: 유입자수(좌) · 구매건수(좌) / 꺾은선: 전환율(우, %) · 회색 음영 = 등록된 이슈 구간</div>
       <div class="legend">
-        ${lg('rgba(184,134,11,0.6)','유입자수')} ${lg('rgba(44,44,44,0.8)','구매건수')} ${lg('#C05E1A','전환율(%)','line')}
+        ${lg('rgba(184,134,11,0.6)','유입자수')} ${lg('rgba(44,44,44,0.8)','구매건수')} ${lg(LINE_COLORS.broas,'전환율(%)','line')}
       </div>
       <div class="chart-wrap-tall"><canvas id="js_traffic"></canvas></div>
 
@@ -1416,7 +1425,7 @@ function buildJsDash(rows, valid, tab){
         <div class="chart-sub">전체 매출 대비 광고 전환매출 비중 파악</div>
         <div class="chart-note">* 광고 전환매출 막대 위 숫자 = 전체 매출 대비 비중(%)</div>
         ${pf('p21',curProd['js'].p21,JS_PRODS)}
-        <div class="legend">${lg('rgba(160,160,160,0.4)','전체 매출')} ${lg(CHARCOAL,'광고 전환매출')}</div>
+        <div class="legend">${lg(TOTAL_COLOR,'전체 매출')} ${lg(CHARCOAL,'광고 전환매출')}</div>
         <div class="chart-wrap"><canvas id="js_c21"></canvas></div>
       </div>
     </div>
@@ -1430,7 +1439,7 @@ function buildJsDash(rows, valid, tab){
         <div class="basis-note">* 전체는 실측(자사몰 매출 ÷ 광고지출). <b>품목별은 추정치</b> — 시트에 품목별 매출만 있고 온라인/오프라인 구분이 없어 <b>품목 매출 × 기간 평균 온라인 비중</b>으로 산출(점선)</div>
         ${pf('p12',curProd['js'].p12,JS_PRODS)}
         <div class="legend">
-          ${lg('#2C2C2C','광고 전환매출')} ${lg(LINE_COLORS.broas,'B-ROAS(%)','line')}
+          ${lg('#2C2C2C','광고 전환매출')} ${lg(LINE_COLORS.broas,'B-ROAS(%)','line',true)}
           ${lg(LINE_COLORS.bep,'BEP 기준','line',true)}
         </div>
         <div class="chart-wrap-tall"><canvas id="js_c12"></canvas></div>
@@ -1440,7 +1449,7 @@ function buildJsDash(rows, valid, tab){
         <div class="chart-sub">광고 ROAS 추이 — B-ROAS·BEP는 2-1에서 확인</div>
         ${pf('p22',curProd['js'].p22,JS_PRODS)}
         <div class="legend">
-          ${lg('rgba(255,200,0,0.9)','광고 전환매출(원)')} ${lg(LINE_COLORS.roas,'광고 ROAS(%)','line')}
+          ${lg(TOTAL_COLOR,'광고 전환매출(원) — 품목 선택 시 해당 품목 색')} ${lg(LINE_COLORS.roas,'광고 ROAS(%)','line')}
         </div>
         <div class="chart-wrap"><canvas id="js_c22"></canvas></div>
       </div>
@@ -1536,9 +1545,9 @@ function buildChannelDash(ch){
         <div class="chart-sub">전체 매출 증감 원인 파악</div>
         <div class="basis-note">* 온라인 매출 = <b>당일 주문금</b> 기준(I열) · 전체 매출 = <b>출고</b> 기준(J열). 광고비·전환매출과 시점을 맞추기 위해 주문금 사용. 기준이 달라 온라인 비중은 실제보다 다소 높게 표시됨</div>
         <div class="legend">
-          ${lg('#999','전체 매출')} ${lg('#2C2C2C','온라인 매출')}
-          ${lg('#999','B-ROAS 전체 기준','line',true)}
-          ${lg('#2C2C2C','B-ROAS 온라인 기준','line',true)}
+          ${lg(TOTAL_COLOR,'전체 매출')} ${lg('#2C2C2C','온라인 매출')}
+          ${lg(LINE_COLORS.broas,'B-ROAS 전체 기준','line',true)}
+          ${lg(LINE_COLORS.broas,'B-ROAS 온라인 기준','line',true)}
         </div>
         <div class="chart-note">* 온라인 매출 막대 위 숫자 = 온라인 비중(%)</div>
         <div class="chart-wrap-tall"><canvas id="${ch}_c11"></canvas></div>
@@ -1548,7 +1557,7 @@ function buildChannelDash(ch){
         <div class="chart-sub">당월 온라인 매출 % 기준 품목별 적용</div>
         <div class="chart-note">* 추정 온라인 매출 = 품목 전체 매출 × 당기 평균 온라인 비중 (${ratioLabel})</div>
         ${pf('p21',curProd[ch].p21,PRODS)}
-        <div class="legend">${lg('rgba(255,200,0,0.9)','추정 온라인 매출(원)')}</div>
+        <div class="legend">${lg(TOTAL_COLOR,'추정 온라인 매출(원) — 품목 선택 시 해당 품목 색')}</div>
         <div class="chart-wrap"><canvas id="${ch}_c21"></canvas></div>
       </div>
     </div>
@@ -1562,7 +1571,7 @@ function buildChannelDash(ch){
         <div class="basis-note">* 온라인 매출 = <b>당일 주문금</b> 기준(I열) · 전체 매출 = <b>출고</b> 기준(J열). 광고비·전환매출과 시점을 맞추기 위해 주문금 사용<br>* <b>품목별은 추정치</b> — 시트에 품목별 온라인 매출이 없어 <b>품목 매출 × 기간 평균 온라인 비중</b>(1-2와 동일 기준)으로 산출(점선). 전체만 실측</div>
         ${pf('p12',curProd[ch].p12,PRODS)}
         <div class="legend">
-          ${lg('#2C2C2C','광고 전환매출')} ${lg(LINE_COLORS.broas,'B-ROAS (%)','line')} ${lg(LINE_COLORS.bep,'BEP 기준','line',true)}
+          ${lg('#2C2C2C','광고 전환매출')} ${lg(LINE_COLORS.broas,'B-ROAS (%)','line',true)} ${lg(LINE_COLORS.bep,'BEP 기준','line',true)}
         </div>
         <div class="chart-wrap-tall"><canvas id="${ch}_c12"></canvas></div>
       </div>
@@ -1855,10 +1864,10 @@ function renderChannelCharts(ch){
 
   // 1-1
   mk('c11',{type:'bar',data:{labels,datasets:[
-    {label:'전체 매출',data:R.map(r=>Math.round((r.total||0)/1e4)),backgroundColor:'rgba(160,160,160,0.5)',borderColor:'#999',borderWidth:1,borderRadius:3,yAxisID:'y'},
+    {label:'전체 매출',data:R.map(r=>Math.round((r.total||0)/1e4)),backgroundColor:TOTAL_COLOR,borderColor:TOTAL_COLOR,borderWidth:1,borderRadius:3,yAxisID:'y'},
     {label:'온라인 매출',data:R.map(r=>Math.round((r.online||0)/1e4)),backgroundColor:'rgba(44,44,44,0.85)',borderColor:'#2C2C2C',borderWidth:1,borderRadius:3,yAxisID:'y'},
     {label:'B-ROAS(전체)',data:R.map(r=>r.adSpend>0?Math.round(r.total/r.adSpend*100):null),type:'line',borderColor:LINE_COLORS.broas,backgroundColor:'transparent',borderWidth:1.5,borderDash:[5,3],pointRadius:3,pointBackgroundColor:LINE_COLORS.broas,tension:0.3,spanGaps:true,yAxisID:'y2'},
-    {label:'B-ROAS(온라인)',data:R.map(r=>r.adSpend>0&&r.online>0?Math.round(r.online/r.adSpend*100):null),type:'line',borderColor:LINE_COLORS.roas,backgroundColor:'transparent',borderWidth:1.5,borderDash:[5,3],pointRadius:3,pointBackgroundColor:LINE_COLORS.roas,tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:'B-ROAS(온라인)',data:R.map(r=>r.adSpend>0&&r.online>0?Math.round(r.online/r.adSpend*100):null),type:'line',borderColor:LINE_COLORS.broas,backgroundColor:'transparent',borderWidth:1.5,borderDash:[5,3],pointRadius:3,pointBackgroundColor:LINE_COLORS.broas,tension:0.3,spanGaps:true,yAxisID:'y2'},
   ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>{
     if(i.datasetIndex===2)return`B-ROAS(전체): ${i.raw}%`;
     if(i.datasetIndex===3)return`B-ROAS(온라인): ${i.raw}%`;
@@ -1868,7 +1877,7 @@ function renderChannelCharts(ch){
     y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}},
     y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}},
   }}},
-  [llpFn(2,'#999'),llpFn(3,'#2C2C2C'),{
+  [llpFn(2,LINE_COLORS.broas,v=>v+'%'),llpFn(3,LINE_COLORS.broas,v=>v+'%'),{
     id:'onlineRatioOnBar',
     afterDatasetsDraw(chart){
       const {ctx}=chart;
@@ -1908,7 +1917,7 @@ function renderJs21(ch,R,labels,avgRatio){
   const cvColor = isAll ? CHARCOAL : PM(key).color;
 
   charts[id]=newChart(el,{type:'bar',data:{labels,datasets:[
-    {label:'전체 매출',data:totalData,backgroundColor:'rgba(160,160,160,0.4)',borderColor:'#999',borderWidth:1,borderRadius:3},
+    {label:'전체 매출',data:totalData,backgroundColor:TOTAL_COLOR,borderColor:TOTAL_COLOR,borderWidth:1,borderRadius:3},
     {label:'광고 전환매출',data:cvData,backgroundColor:cvColor,borderColor:cvColor,borderWidth:1,borderRadius:3},
   ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
     tooltip:{callbacks:{label:i=>`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
@@ -1933,11 +1942,11 @@ function renderJs21(ch,R,labels,avgRatio){
 }
 
 function renderJs22(ch,R,labels,avgRatio){
-  const YELLOW='rgba(255,200,0,0.88)', YELLOWB='#B8860B';
   const id='js_c22';if(charts[id]){try{charts[id].destroy();}catch(e){}}
   const el=document.getElementById(id);if(!el)return;
   const p22key=curProd[ch].p22;
   const isAll=p22key==='all';
+  const barColor=isAll?TOTAL_COLOR:PM(p22key).color;
   const cvData = isAll
     ? R.map(r=>Math.round((r.adSales||0)/1e4))
     : R.map(r=>Math.round((r[p22key+'CV']||0)/1e4));
@@ -1946,8 +1955,8 @@ function renderJs22(ch,R,labels,avgRatio){
     : R.map(r=>r[p22key+'Roas']!=null?Math.round(r[p22key+'Roas']*100):null);
 
   charts[id]=newChart(el,{type:'bar',data:{labels,datasets:[
-    {label:'광고 전환매출',data:cvData,backgroundColor:YELLOW,borderColor:YELLOWB,borderWidth:1,borderRadius:3,yAxisID:'y'},
-    {label:'광고 ROAS',data:roasData,type:'line',borderColor:LINE_COLORS.roas,backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:LINE_COLORS.roas,tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:'광고 전환매출',data:cvData,backgroundColor:barColor,borderColor:barColor,borderWidth:1,borderRadius:3,yAxisID:'y'},
+    {label:'광고 ROAS',data:roasData,type:'line',borderColor:LINE_COLORS.roasSoft,backgroundColor:'transparent',borderWidth:1.4,pointRadius:3,pointBackgroundColor:LINE_COLORS.roasSoft,tension:0.3,spanGaps:true,yAxisID:'y2'},
   ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
     tooltip:{callbacks:{label:i=>i.dataset.yAxisID==='y2'?`${i.dataset.label}: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
     scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
@@ -1988,13 +1997,13 @@ function renderJsTrafficChart(R,labels){
   charts[id]=newChart(el,{type:'bar',data:{labels,datasets:[
     {label:'유입자수',data:R.map(r=>r.visitors||0),backgroundColor:'rgba(184,134,11,0.5)',borderColor:'#B8860B',borderWidth:1,borderRadius:3,yAxisID:'y'},
     {label:'구매건수',data:R.map(r=>r.purchases||0),backgroundColor:'rgba(44,44,44,0.7)',borderColor:'#2C2C2C',borderWidth:1,borderRadius:3,yAxisID:'y'},
-    {label:'전환율',data:R.map(r=>r.cvRate||null),type:'line',borderColor:'#C05E1A',backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C05E1A',tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:'전환율',data:R.map(r=>r.cvRate||null),type:'line',borderColor:LINE_COLORS.broas,backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:LINE_COLORS.broas,tension:0.3,spanGaps:true,yAxisID:'y2'},
   ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
     tooltip:{callbacks:{label:i=>i.dataset.yAxisID==='y2'?`전환율: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}`}}},
     scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
       y:{type:'linear',position:'left',ticks:{font:{size:9},callback:v=>v.toLocaleString()}},
       y2:{type:'linear',position:'right',grid:{drawOnChartArea:false},ticks:{font:{size:9},callback:v=>v+'%'}}}},
-  },[issueShade,llpFn(2,'#C05E1A',v=>v+'%')]);
+  },[issueShade,llpFn(2,LINE_COLORS.broas,v=>v+'%')]);
 }
 
 function renderJsCharts(ch,R,labels,avgRatio){
@@ -2087,7 +2096,7 @@ function render12(ch,R,labels,avgRatio){
   const barColor = isAll ? CHARCOAL : PM(key).color;
   charts[id]=newChart(el,{type:'bar',data:{labels,datasets:[
     {label:'광고 전환매출',data:cvData,backgroundColor:barColor,borderColor:barColor,borderWidth:1,borderRadius:3,yAxisID:'y'},
-    {label:isAll?'B-ROAS':'B-ROAS(추정)',data:broasData,type:'line',borderColor:LINE_COLORS.broas,backgroundColor:'transparent',borderWidth:2,borderDash:isAll?[]:[5,3],pointRadius:3,pointBackgroundColor:LINE_COLORS.broas,tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:isAll?'B-ROAS':'B-ROAS(추정)',data:broasData,type:'line',borderColor:LINE_COLORS.broas,backgroundColor:'transparent',borderWidth:2,borderDash:[5,3],pointRadius:3,pointBackgroundColor:LINE_COLORS.broas,tension:0.3,spanGaps:true,yAxisID:'y2'},
   ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
     tooltip:{callbacks:{label:i=>i.datasetIndex===1?`${i.dataset.label}: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
   scales:{
@@ -2106,7 +2115,7 @@ function render21(ch,R,labels,avgRatio){
   if(key==='all'){
     charts[id]=newChart(el,{type:'bar',data:{labels,datasets:[
       {label:'추정 온라인 매출',data:R.map(r=>{const t=r.total??0;return t>0?Math.round(t*avgRatio/1e4):null;}),
-        backgroundColor:YELLOW,borderColor:YELLOWB,borderWidth:1,borderRadius:3},
+        backgroundColor:TOTAL_COLOR,borderColor:TOTAL_COLOR,borderWidth:1,borderRadius:3},
     ]},options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
       scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},y:{ticks:{font:{size:9},callback:v=>v.toLocaleString()+'만'}}}}});
@@ -2138,7 +2147,7 @@ function render22(ch,R,labels,avgRatio){
     : R.map(r=>r[key+'Roas']!=null?Math.round(r[key+'Roas']*100):null);
   charts[id]=newChart(el,{type:'bar',data:{labels,datasets:[
     {label:label+' 전환매출',data:cvData,backgroundColor:barColor,borderColor:barBorder,borderWidth:1,borderRadius:3,yAxisID:'y'},
-    {label:label+' ROAS',data:roasData,type:'line',borderColor:LINE_COLORS.roas,backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:LINE_COLORS.roas,tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:label+' ROAS',data:roasData,type:'line',borderColor:LINE_COLORS.roasSoft,backgroundColor:'transparent',borderWidth:1.4,pointRadius:3,pointBackgroundColor:LINE_COLORS.roasSoft,tension:0.3,spanGaps:true,yAxisID:'y2'},
   ]},options:{responsive:true,maintainAspectRatio:false,
     plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>i.datasetIndex===1?`ROAS: ${i.raw}%`:`${i.dataset.label}: ${i.raw?.toLocaleString()}만원`}}},
     scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
@@ -2164,7 +2173,7 @@ function render31(ch,R,labels){
   charts[id]=newChart(el,{type:'bar',data:{labels,datasets:[
     {label:label+' 광고 전환매출',data:cvData,backgroundColor:baseColor,borderColor:baseColor,borderWidth:1,borderRadius:3,yAxisID:'y'},
     {label:label+' 광고 지출',data:spendData,backgroundColor:'rgba(160,160,160,0.45)',borderColor:'#999',borderWidth:1,borderRadius:3,yAxisID:'y'},
-    {label:'통합 ROAS',data:roasData,type:'line',borderColor:LINE_COLORS.roas,backgroundColor:'transparent',borderWidth:2.5,pointRadius:4,pointBackgroundColor:LINE_COLORS.roas,tension:0.3,spanGaps:true,yAxisID:'y2'},
+    {label:'통합 ROAS',data:roasData,type:'line',borderColor:LINE_COLORS.roasSoft,backgroundColor:'transparent',borderWidth:1.75,pointRadius:4,pointBackgroundColor:LINE_COLORS.roasSoft,tension:0.3,spanGaps:true,yAxisID:'y2'},
   ]},options:{responsive:true,maintainAspectRatio:false,
     plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>i.dataset.yAxisID==='y2'?`${i.dataset.label}: ${i.raw}%`:`${i.dataset.label}: ${i.raw.toLocaleString()}만원`}}},
     scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:true}},
@@ -2185,14 +2194,14 @@ function render32(ch,R,labels){
     datasets.push(
       {label:'META 전환매출',data:R.map(r=>Math.round((r[key+'MetaCV']||0)/1e4)),backgroundColor:LINE_COLORS.metaRoas,borderColor:LINE_COLORS.metaRoas,borderWidth:1,borderRadius:3,yAxisID:'y'},
       {label:'META 지출',data:R.map(r=>Math.round((r[key+'MetaSpend']||0)/1e4)),backgroundColor:'rgba(23,77,134,0.25)',borderColor:LINE_COLORS.metaRoas,borderWidth:1,borderRadius:3,yAxisID:'y'},
-      {label:'META ROAS',data:R.map(r=>r[key+'MetaRoas']!=null?Math.round(r[key+'MetaRoas']*100):null),type:'line',borderColor:LINE_COLORS.metaRoas,backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:LINE_COLORS.metaRoas,tension:0.3,spanGaps:true,yAxisID:'y2'},
+      {label:'META ROAS',data:R.map(r=>r[key+'MetaRoas']!=null?Math.round(r[key+'MetaRoas']*100):null),type:'line',borderColor:LINE_COLORS.metaRoasSoft,backgroundColor:'transparent',borderWidth:1.4,pointRadius:3,pointBackgroundColor:LINE_COLORS.metaRoasSoft,tension:0.3,spanGaps:true,yAxisID:'y2'},
     );
   }
   if(showCpc){
     datasets.push(
       {label:'CPC 전환매출',data:R.map(r=>Math.round((r[key+'CpcCV']||0)/1e4)),backgroundColor:LINE_COLORS.cpcRoas,borderColor:LINE_COLORS.cpcRoas,borderWidth:1,borderRadius:3,yAxisID:'y'},
       {label:'CPC 지출',data:R.map(r=>Math.round((r[key+'CpcSpend']||0)/1e4)),backgroundColor:'rgba(102,144,189,0.25)',borderColor:LINE_COLORS.cpcRoas,borderWidth:1,borderRadius:3,yAxisID:'y'},
-      {label:'CPC ROAS',data:R.map(r=>r[key+'CpcRoas']!=null?Math.round(r[key+'CpcRoas']*100):null),type:'line',borderColor:LINE_COLORS.cpcRoas,backgroundColor:'transparent',borderWidth:2,pointRadius:3,pointBackgroundColor:LINE_COLORS.cpcRoas,tension:0.3,spanGaps:true,yAxisID:'y2'},
+      {label:'CPC ROAS',data:R.map(r=>r[key+'CpcRoas']!=null?Math.round(r[key+'CpcRoas']*100):null),type:'line',borderColor:LINE_COLORS.cpcRoasSoft,backgroundColor:'transparent',borderWidth:1.4,pointRadius:3,pointBackgroundColor:LINE_COLORS.cpcRoasSoft,tension:0.3,spanGaps:true,yAxisID:'y2'},
     );
   }
 
