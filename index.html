@@ -432,12 +432,12 @@ async function fetchFromSheets(ch, _isRetry){
     let salesRows=[], paidRows=[];
 
     if(ch==='oy'){
-      // 올리브영 원본 시트에서 직접 읽기 — 두 시트는 서로 독립적이므로 동시에 요청해 대기 시간을 절반으로 줄인다
+      // 올리브영 원본 시트에서 직접 읽기 — 순차 호출.
+      // (한때 Promise.all로 동시 호출했으나, Supabase 무료 티어에서 같은 함수를 동시에 두 번 부르면
+      //  개별로는 1~2초면 끝날 요청이 서로 자원을 다퉈 반복 타임아웃 나는 것을 실측으로 확인. 되돌림)
       const OY_ID = '1cL2Y5W-O7PSs8CCcLo2xrl6RXB68a5nbJvjroi3uK4g';
-      const [raw1, raw2] = await Promise.all([
-        fetchSheet(OY_ID, '[전체] Daily'),
-        fetchSheet(OY_ID, '[국내] paid'),
-      ]);
+      const raw1 = await fetchSheet(OY_ID, '[전체] Daily');
+      const raw2 = await fetchSheet(OY_ID, '[국내] paid');
       window.RAW = {...(window.RAW||{}), oyDaily: raw1, oyPaid: raw2};
       const parsed = parseOySheets(raw1, raw2);
       salesRows = parsed.sales;
@@ -529,7 +529,7 @@ function showApp(){
 
 /* ── Supabase 데이터 저장/로드 ── */
 // 파서 로직을 바꿀 때마다 올릴 것. 값이 다르면 옛 캐시를 버리고 시트를 다시 읽는다.
-const PARSER_VERSION = 24;
+const PARSER_VERSION = 25;
 
 function saveLocal(ch){
   try{
