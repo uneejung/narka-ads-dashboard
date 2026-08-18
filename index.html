@@ -529,7 +529,7 @@ function showApp(){
 
 /* ── Supabase 데이터 저장/로드 ── */
 // 파서 로직을 바꿀 때마다 올릴 것. 값이 다르면 옛 캐시를 버리고 시트를 다시 읽는다.
-const PARSER_VERSION = 22;
+const PARSER_VERSION = 23;
 
 function saveLocal(ch){
   try{
@@ -1067,7 +1067,7 @@ function buildIntegrated(){
     <div class="summary-kpi-row">
       <div class="summary-kpi"><div class="summary-kpi-label">전체 매출</div><div class="summary-kpi-val sk-full">${fmt(Math.round(oyTot))}<small>원</small></div><div class="summary-kpi-sub">sell-out 기준</div></div>
       <div class="summary-kpi"><div class="summary-kpi-label">광고 전환 매출</div><div class="summary-kpi-val sk-full">${fmt(Math.round(oyAdCv))}<small>원</small></div><div class="summary-kpi-sub">온라인+오늘드림 · 비중 ${fmtPct(oyTot>0?oyAdCv/oyTot:null)}</div></div>
-      <div class="summary-kpi"><div class="summary-kpi-label">B-ROAS</div><div class="summary-kpi-val" style="color:#7B2D8B">${fmtRoas(oyAdSp>0?oyTot/oyAdSp:null)}</div><div class="summary-kpi-sub">온오프라인 전체 매출 기준</div></div>
+      <div class="summary-kpi"><div class="summary-kpi-label">B-ROAS</div><div class="summary-kpi-val" style="color:#7B2D8B">${fmtRoas(oyAdSp>0?oyTot/oyAdSp:null)}</div><div class="summary-kpi-sub">온오프라인 전체 매출 기준 · BEP 838%</div></div>
       <div class="summary-kpi"><div class="summary-kpi-label">광고 지출 / 매체 ROAS</div><div class="summary-kpi-val" style="color:#C05E1A">${fmtRoas(oyMediaRoas)}</div><div class="summary-kpi-sub">광고지출 ${fmt(Math.round(oyAdSp))}원</div></div>
     </div>
     <div class="summary-chart-wrap"><canvas id="oyIntChart"></canvas></div>
@@ -1077,7 +1077,7 @@ function buildIntegrated(){
     <div class="summary-kpi-row">
       <div class="summary-kpi"><div class="summary-kpi-label">전체 매출</div><div class="summary-kpi-val sk-full">${fmt(Math.round(jsTot))}<small>원</small></div></div>
       <div class="summary-kpi"><div class="summary-kpi-label">광고 전환 매출</div><div class="summary-kpi-val sk-full">${fmt(Math.round(jsAdCv))}<small>원</small></div><div class="summary-kpi-sub">비중 ${fmtPct(jsTot>0?jsAdCv/jsTot:null)}</div></div>
-      <div class="summary-kpi"><div class="summary-kpi-label">B-ROAS</div><div class="summary-kpi-val" style="color:#7B2D8B">${fmtRoas(jsAdSp>0?jsOnl/jsAdSp:null)}</div></div>
+      <div class="summary-kpi"><div class="summary-kpi-label">B-ROAS</div><div class="summary-kpi-val" style="color:#7B2D8B">${fmtRoas(jsAdSp>0?jsOnl/jsAdSp:null)}</div><div class="summary-kpi-sub">BEP 157%</div></div>
       <div class="summary-kpi"><div class="summary-kpi-label">매체 ROAS</div><div class="summary-kpi-val" style="color:#C05E1A">${fmtRoas(jsMediaRoas)}</div></div>
     </div>
     <div class="summary-chart-wrap"><canvas id="jsIntChart"></canvas></div>
