@@ -529,7 +529,7 @@ function showApp(){
 
 /* ── Supabase 데이터 저장/로드 ── */
 // 파서 로직을 바꿀 때마다 올릴 것. 값이 다르면 옛 캐시를 버리고 시트를 다시 읽는다.
-const PARSER_VERSION = 25;
+const PARSER_VERSION = 26;
 
 function saveLocal(ch){
   try{
@@ -1374,21 +1374,11 @@ function buildJsDash(rows, valid, tab){
   </div>
   <div class="upload-zone">
     <h3>자사몰 데이터 업데이트</h3>
-    <p>Google Sheets에서 자동으로 불러오거나, CSV 직접 업로드</p>
+    <p>Google Sheets에서 자동으로 불러오기</p>
     <div class="upload-row">
       <div class="upload-item">
         <button class="upload-btn" style="background:#2D6A4F" onclick="fetchFromSheets('js')">🔄 Sheets에서 자동 불러오기</button>
         <div class="file-status st-wait" id="st_js_sheets">클릭하면 최신 데이터 자동 반영</div>
-      </div>
-      <div class="upload-item">
-        <button class="upload-btn" style="background:#444;font-size:11px;padding:6px 12px" onclick="document.getElementById('f_js_sales').click()">📊 매출 CSV</button>
-        <input type="file" id="f_js_sales" class="file-input" accept=".csv,.txt" onchange="handleUpload('js','sales',this.files[0])">
-        <div class="file-status st-wait" id="st_js_sales">대기 중</div>
-      </div>
-      <div class="upload-item">
-        <button class="upload-btn" style="background:#444;font-size:11px;padding:6px 12px" onclick="document.getElementById('f_js_paid').click()">💰 광고 CSV</button>
-        <input type="file" id="f_js_paid" class="file-input" accept=".csv,.txt" onchange="handleUpload('js','paid',this.files[0])">
-        <div class="file-status st-wait" id="st_js_paid">대기 중</div>
       </div>
     </div>
   </div>
@@ -1525,24 +1515,11 @@ function buildChannelDash(ch){
   <!-- CSV 업로드 -->
   <div class="upload-zone">
     <h3>${chName} 데이터 업데이트</h3>
-    <p>Google Sheets에서 자동으로 불러오거나, CSV 직접 업로드</p>
+    <p>Google Sheets에서 자동으로 불러오기</p>
     <div class="upload-row">
       <div class="upload-item">
         <button class="upload-btn" style="background:#2D6A4F" onclick="fetchFromSheets('${ch}')">🔄 Sheets에서 자동 불러오기</button>
         <div class="file-status st-wait" id="st_${ch}_sheets">클릭하면 최신 데이터 자동 반영</div>
-      </div>
-    </div>
-    <div style="margin-top:12px;font-size:11px;color:#aaa">또는 CSV 직접 업로드</div>
-    <div class="upload-row" style="margin-top:8px">
-      <div class="upload-item">
-        <button class="upload-btn" style="background:#444;font-size:11px;padding:6px 12px" onclick="document.getElementById('f_${ch}_sales').click()">📊 매출 CSV</button>
-        <input type="file" id="f_${ch}_sales" class="file-input" accept=".csv,.txt" onchange="handleUpload('${ch}','sales',this.files[0])">
-        <div class="file-status ${DATA[ch].sales.length?'st-ok':'st-wait'}" id="st_${ch}_sales">${DATA[ch].sales.length?`✅ ${DATA[ch].sales.length}일 로드`:'대기 중'}</div>
-      </div>
-      <div class="upload-item">
-        <button class="upload-btn" style="background:#444;font-size:11px;padding:6px 12px" onclick="document.getElementById('f_${ch}_paid').click()">💰 광고 CSV</button>
-        <input type="file" id="f_${ch}_paid" class="file-input" accept=".csv,.txt" onchange="handleUpload('${ch}','paid',this.files[0])">
-        <div class="file-status ${DATA[ch].paid.length?'st-ok':'st-wait'}" id="st_${ch}_paid">${DATA[ch].paid.length?`✅ ${DATA[ch].paid.length}일 로드`:'대기 중'}</div>
       </div>
     </div>
   </div>
